@@ -5,7 +5,7 @@ import type { User } from '@supabase/supabase-js'
 interface AuthContextType {
   user: User | null
   role: string | null
-  site: string | null
+  site: string | null           // store the user's site after login
   loading: boolean
   signIn: (email: string, password: string) => Promise<void>
   signOut: () => Promise<void>
@@ -20,7 +20,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Get session and fetch user role from your users table
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       if (session?.user) fetchUserDetails(session.user.id)
@@ -30,6 +29,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) fetchUserDetails(session.user.id)
+      else {
+        setRole(null)
+        setSite(null)
+      }
       setLoading(false)
     })
 
@@ -37,12 +40,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, [])
 
   async function fetchUserDetails(userId: string) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('users')
       .select('role, site')
       .eq('id', userId)
       .single()
-    
     if (data) {
       setRole(data.role)
       setSite(data.site)
