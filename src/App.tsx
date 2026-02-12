@@ -2,9 +2,11 @@ import { useState } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from '/vite.svg'
 import './App.css'
-// DELETE THIS LINE: import DatabaseTest from './components/DatabaseTest'
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom'
+import ProtectedRoute from './components/ProtectedRoute'
+import Login from './pages/Login'
 
-function App() {
+function Home() {
   const [count, setCount] = useState(0)
 
   return (
@@ -17,9 +19,6 @@ function App() {
           <img src={reactLogo} className="logo react" alt="React logo" />
         </a>
       </div>
-      
-      {/* DELETE THIS LINE: <DatabaseTest /> */}
-      
       <h1>Vite + React</h1>
       <div className="card">
         <button onClick={() => setCount((count) => count + 1)}>
@@ -29,10 +28,30 @@ function App() {
           Edit <code>src/App.tsx</code> and save to test HMR
         </p>
       </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
+      <p className="read-the-docs">Click on the Vite and React logos to learn more</p>
     </>
+  )
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <nav style={{ padding: 12 }}>
+        <Link to="/">Home</Link>{' '}
+        <Link to="/login">Login</Link>
+      </nav>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Home />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/login" element={<Login />} />
+      </Routes>
+    </BrowserRouter>
   )
 }
 
