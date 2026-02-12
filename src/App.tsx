@@ -2,7 +2,7 @@ import { useState } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from '/vite.svg'
 import './App.css'
-import DatabaseTest from './components/DatabaseTest'
+// DELETE THIS LINE: import DatabaseTest from './components/DatabaseTest'
 
 function App() {
   const [count, setCount] = useState(0)
@@ -18,8 +18,7 @@ function App() {
         </a>
       </div>
       
-      {/* Add this line to test the database connection */}
-      <DatabaseTest />
+      {/* DELETE THIS LINE: <DatabaseTest /> */}
       
       <h1>Vite + React</h1>
       <div className="card">
