@@ -16,6 +16,7 @@ interface Machine {
 
 export default function ProductionInput() {
   const { user, site } = useAuth()
+  const getDb = useDb()
   const navigate = useNavigate()
   const [step, setStep] = useState(1)
   const [selectedTypes, setSelectedTypes] = useState<string[]>([])
@@ -39,7 +40,7 @@ export default function ProductionInput() {
     }
 
     const fetchMachines = async () => {
-      const db = useDb()
+      const db = getDb()
       const { data } = await db
         .from('assets')
         .select('id, asset_code, asset_type, machine_role')

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { supabase } from '../lib/supabaseClient'
+import { useDb } from '../hooks/useDb'
 import Layout from '../components/Layout'
 
 interface Machine {
@@ -20,6 +20,7 @@ interface LoggedHour {
 
 export default function HourlyLogging() {
   const { user, site } = useAuth()
+  const getDb = useDb()
   const [machines, setMachines] = useState<Machine[]>([])
   const [loggedHours, setLoggedHours] = useState<LoggedHour[]>([])
   const [selectedMachine, setSelectedMachine] = useState<Machine | null>(null)
@@ -30,7 +31,8 @@ export default function HourlyLogging() {
   // Fetch machines for this site
   useEffect(() => {
     const fetchMachines = async () => {
-      const { data } = await supabase
+      const db = getDb()
+      const { data } = await db
         .from('assets')
         .select('id, asset_code, asset_type, machine_role')
         .eq('site', site)
@@ -44,7 +46,8 @@ export default function HourlyLogging() {
   useEffect(() => {
     const fetchTodayLogs = async () => {
       const today = new Date().toISOString().split('T')[0]
-      const { data } = await supabase
+      const db = getDb()
+      const { data } = await db
         .from('production_entries')
         .select('machine_id, hour, activity, number_of_loads')
         .eq('submitted_by', user?.id)
@@ -101,8 +104,8 @@ export default function HourlyLogging() {
       site,
       status: 'PENDING',
     }
-
-    const { error } = await supabase.from('production_entries').insert(newEntry)
+    const db = getDb()
+    const { error } = await db.from('production_entries').insert(newEntry)
     if (error) {
       alert('Failed to save: ' + error.message)
     } else {
@@ -122,7 +125,8 @@ export default function HourlyLogging() {
   const handleBreakdown = async (reason: string, startTime: string) => {
     if (!selectedMachine || selectedHour === null) return
     // Insert into breakdowns table
-    const { error } = await supabase.from('breakdowns').insert({
+    const db = getDb()
+    const { error } = await db.from('breakdowns').insert({
       asset_id: selectedMachine.id,
       site,
       reason,

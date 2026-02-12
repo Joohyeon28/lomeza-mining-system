@@ -161,3 +161,130 @@ html, body, #root {
 .danger-btn:hover {
   background: #b71c1c;
 }
+
+/* =========================
+   APP LAYOUT / CONTENT STYLES
+   These styles ensure a high-contrast content area so pages are visible
+   even when a dark global background is used for the login screens.
+========================= */
+
+.container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 230px;
+  background: #0f1720;
+  color: #cbd5e1;
+  padding: 28px 18px;
+  box-shadow: 2px 0 12px rgba(0,0,0,0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sidebar .logo {
+  font-weight: 800;
+  color: #ffb300;
+  line-height: 1.1;
+  margin-bottom: 8px;
+}
+
+.sidebar nav a {
+  display: block;
+  padding: 10px 8px;
+  color: #cbd5e1;
+  text-decoration: none;
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.sidebar nav a.active,
+.sidebar nav a:hover {
+  background: rgba(255,179,0,0.12);
+  color: #fff;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  font-size: 13px;
+}
+
+.content {
+  flex: 1;
+  background: #f7f9fb; /* light background for readability */
+  color: #0b1220; /* dark text */
+  padding: 28px 40px;
+  overflow: auto;
+}
+
+.dashboard-header h1 {
+  margin: 0 0 6px 0;
+  font-size: 22px;
+}
+.dashboard-header p { margin: 0 0 18px 0; color: #475569 }
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.metric-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 12px 14px;
+  box-shadow: 0 6px 18px rgba(12,18,26,0.06);
+}
+.metric-title { font-size: 12px; color: #6b7280; font-weight: 700 }
+.metric-value { font-size: 20px; margin: 6px 0; font-weight: 800 }
+.metric-value.positive { color: #16a34a }
+.metric-sub { font-size: 12px; color: #6b7280 }
+
+.performance h2 { margin-top: 10px }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(2,6,23,0.04);
+}
+thead th {
+  text-align: left;
+  padding: 12px 14px;
+  background: #0b1220;
+  color: #fff;
+  font-size: 13px;
+}
+tbody td { padding: 12px 14px; border-top: 1px solid #eef2f6 }
+.empty-state { color: #64748b; padding: 18px; background: #fff; border-radius: 8px }
+
+.status-badge {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 12px;
+}
+.status-badge.pending { background: #fbbf24; color: #111 }
+.status-badge.approved { background: #16a34a; color: #fff }
+.status-badge.rejected { background: #ef4444; color: #fff }
+
+/* Modal basics */
+.modal { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; background: rgba(2,6,23,0.45); }
+.modal-card { background: #fff; padding: 18px; border-radius: 10px; width: 420px; max-width: calc(100% - 40px); }
+
+/* Forms inside content */
+.form-input, select {
+  background: #fff; color: #0b1220; border: 1px solid #d1d5db; border-radius: 6px;
+}
+
+/* Make buttons visible on light content */
+.primary-btn { background: #0b72ff; color: #fff; padding: 8px 12px; border-radius: 8px; border:none }
+.secondary-btn { background: transparent; border: 1px solid #cbd5e1; color: #0b1220; padding: 8px 12px; border-radius: 8px }
+
+/* Utility */
+.machine-id { font-weight: 700 }

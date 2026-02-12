@@ -17,6 +17,7 @@ interface ProductionEntry {
 
 export default function ControllerDashboard() {
   const { user, site } = useAuth()
+  const getDb = useDb()
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [stats, setStats] = useState({
     total: 0,
@@ -31,7 +32,7 @@ export default function ControllerDashboard() {
 
     const fetchTodayEntries = async () => {
       const today = new Date().toISOString().split('T')[0]
-        const db = useDb() // get Supabase client with site schema
+        const db = getDb() // get Supabase client with site schema
       const { data, error } = await db
         .from('production_entries')
         .select(`
