@@ -32,7 +32,7 @@ export default function Login() {
     setError(null)
     setSubmitting(true)
     try {
-      await signIn(email, password)
+      await signIn(email, password, selectedSite)
       navigate(from, { replace: true })
     } catch (err: any) {
       setError(err?.message ?? 'Failed to sign in')
@@ -44,23 +44,48 @@ export default function Login() {
   // If no site selected yet – show site selection UI
   if (!selectedSite) {
     return (
-      <div className="login-body" style={{ backgroundImage: `url(${bgImage})` }}>
-        <div className="login-card" style={{ maxWidth: 480 }}>
-          <h1 className="brand">LOMEZA</h1>
+      <div
+        className="login-body"
+        style={{
+          backgroundImage: `url(${bgImage})`,
+          backgroundSize: 'cover',
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'center',
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+        }}
+      >
+        <div
+          className="login-card"
+          style={{
+            maxWidth: 520,
+            width: '100%',
+            background: 'rgba(10,10,10,0.72)',
+            padding: '36px',
+            borderRadius: 8,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+            textAlign: 'center',
+          }}
+        >
+          <h1 className="brand" style={{ marginBottom: 6 }}>LOMEZA</h1>
           <p className="tagline">Trackless Mobile Machinery Management</p>
-          <h3 style={{ margin: '30px 0 20px', color: '#fff' }}>Select your site</h3>
-          <div style={{ display: 'flex', gap: '20px', justifyContent: 'center' }}>
+          <h3 style={{ margin: '28px 0 18px', color: '#fff' }}>Select your site</h3>
+          <div style={{ display: 'flex', gap: 20, justifyContent: 'center' }}>
             <button
               onClick={() => handleSiteSelect('Sileko')}
               style={{
                 background: '#1a1a1a',
                 border: '2px solid #333',
-                padding: '16px 32px',
-                fontSize: '18px',
-                fontWeight: 'bold',
+                padding: '14px 26px',
+                fontSize: 18,
+                fontWeight: 700,
                 color: '#ffb300',
                 cursor: 'pointer',
-                flex: 1
+                flex: 1,
+                borderRadius: 6,
               }}
             >
               SILEKO
@@ -70,20 +95,19 @@ export default function Login() {
               style={{
                 background: '#1a1a1a',
                 border: '2px solid #333',
-                padding: '16px 32px',
-                fontSize: '18px',
-                fontWeight: 'bold',
+                padding: '14px 26px',
+                fontSize: 18,
+                fontWeight: 700,
                 color: '#ffb300',
                 cursor: 'pointer',
-                flex: 1
+                flex: 1,
+                borderRadius: 6,
               }}
             >
               KALAGADI
             </button>
           </div>
-          <small style={{ display: 'block', marginTop: 30 }}>
-            Secure access to mining operations • Lomeza © 2025
-          </small>
+          <small className="footer-note">Secure access to mining operations • Lomeza © 2025</small>
         </div>
       </div>
     )
@@ -91,77 +115,86 @@ export default function Login() {
 
   // Site selected – show login form with chosen site info on the right
   return (
-    <div className="login-body" style={{ backgroundImage: `url(${bgImage})` }}>
-      <div className="login-card" style={{ maxWidth: 720, padding: '40px' }}>
-        <div style={{ display: 'flex', gap: '40px' }}>
+    <div
+      className="login-body"
+      style={{
+        backgroundImage: `url(${bgImage})`,
+        backgroundSize: 'cover',
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'center',
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+      }}
+    >
+      <div
+        className="login-card"
+        style={{
+          maxWidth: 920,
+          width: '100%',
+          background: 'rgba(10,10,10,0.72)',
+          padding: 36,
+          borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+        }}
+      >
+        <div style={{ display: 'flex', gap: 40, alignItems: 'stretch', flexWrap: 'wrap' }}>
           {/* LEFT COLUMN – Login Form */}
-          <div style={{ flex: 1.2 }}>
-            <h1 className="brand" style={{ fontSize: 32, marginBottom: 8 }}>LOMEZA</h1>
-            <p className="tagline" style={{ marginBottom: 24 }}>Trackless Mobile Machinery Management</p>
+          <div style={{ flex: 1.2, minWidth: 320 }}>
+              <h1 className="brand">LOMEZA</h1>
+              <p className="tagline">Trackless Mobile Machinery Management</p>
             <form onSubmit={handleSubmit}>
-              <input
-                type="email"
-                placeholder="admin@lomeza.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-              <input
-                type="password"
-                placeholder="Enter password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
+                <input
+                  className="form-input"
+                  type="email"
+                  placeholder="admin@lomeza.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+                <input
+                  className="form-input"
+                  type="password"
+                  placeholder="Enter password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
               {error && (
                 <p style={{ color: '#ff6b6b', margin: '8px 0 0', fontSize: '14px' }}>
                   {error}
                 </p>
               )}
-              <button type="submit" disabled={submitting} style={{ marginTop: 16 }}>
+              <button className="submit-btn" type="submit" disabled={submitting}>
                 {submitting ? 'LOGGING IN...' : 'LOGIN'}
               </button>
             </form>
           </div>
-
           {/* RIGHT COLUMN – Chosen site & change button */}
-          <div style={{ 
-            flex: 0.8, 
-            borderLeft: '1px solid #333', 
-            paddingLeft: 30,
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}>
+          <div
+            className="site-info-col"
+            style={{
+              flex: 0.8,
+              borderLeft: '1px solid rgba(255,255,255,0.06)',
+              paddingLeft: 30,
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              minWidth: 220,
+            }}
+          >
             <div style={{ marginBottom: 20 }}>
-              <span style={{ color: '#aaa', fontSize: 13, textTransform: 'uppercase' }}>
-                Chosen site
-              </span>
-              <div style={{ 
-                fontSize: 28, 
-                fontWeight: 700, 
-                color: '#ffb300',
-                marginTop: 4
-              }}>
-                {selectedSite}
-              </div>
+              <span className="site-label">Chosen site</span>
+              <div className="site-name">{selectedSite}</div>
             </div>
-            <button
-              onClick={() => setSelectedSite(null)}
-              style={{
-                background: 'transparent',
-                border: '1px solid #444',
-                color: '#ccc',
-                padding: '10px 0',
-                cursor: 'pointer',
-                fontSize: 14
-              }}
-            >
+            <button className="change-site-btn" onClick={() => setSelectedSite(null)}>
               ⟲ CHANGE SITE
             </button>
           </div>
         </div>
-        <small style={{ display: 'block', marginTop: 30, textAlign: 'center' }}>
+        <small className="footer-note" style={{ display: 'block', marginTop: 30, textAlign: 'center' }}>
           Secure access to mining operations • Lomeza © 2025
         </small>
       </div>

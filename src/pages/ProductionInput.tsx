@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { supabase } from '../lib/supabaseClient'
+import { useDb } from '../hooks/useDb'
 import Layout from '../components/Layout'
 
 // ---------- Types ----------
@@ -39,7 +39,8 @@ export default function ProductionInput() {
     }
 
     const fetchMachines = async () => {
-      const { data } = await supabase
+      const db = useDb()
+      const { data } = await db
         .from('assets')
         .select('id, asset_code, asset_type, machine_role')
         .eq('site', site)

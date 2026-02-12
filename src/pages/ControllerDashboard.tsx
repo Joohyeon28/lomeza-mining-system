@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { supabase } from '../lib/supabaseClient'
+import { useDb } from '../hooks/useDB'
 import Layout from '../components/Layout'
 
 interface ProductionEntry {
@@ -31,8 +31,8 @@ export default function ControllerDashboard() {
 
     const fetchTodayEntries = async () => {
       const today = new Date().toISOString().split('T')[0]
-
-      const { data, error } = await supabase
+        const db = useDb() // get Supabase client with site schema
+      const { data, error } = await db
         .from('production_entries')
         .select(`
           id,

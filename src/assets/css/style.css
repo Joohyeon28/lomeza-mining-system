@@ -5,6 +5,29 @@
   max-width: 720px; /* wider when site is selected */
 }
 
+/* Ensure the page/background covers full viewport */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: #000;
+}
+
+/* Page background container */
+.login-body {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-attachment: fixed;
+}
+
 .site-selector {
   display: flex;
   gap: 20px;
@@ -25,6 +48,59 @@
 }
 .site-btn:hover {
   border-color: #ffb300;
+}
+
+/* Branding */
+.brand {
+  color: #fff;
+  font-size: 32px;
+  margin-bottom: 8px;
+  letter-spacing: 1px;
+}
+.tagline {
+  color: #fff;
+  margin-bottom: 18px;
+  opacity: 0.95;
+}
+
+/* Footer note */
+.footer-note {
+  color: #fff;
+  opacity: 0.95;
+  font-size: 13px;
+}
+
+/* Form inputs & buttons */
+.form-input {
+  width: 100%;
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: #fff;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.form-input:focus {
+  border-color: rgba(255,179,0,0.9);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+}
+
+.submit-btn {
+  display: inline-block;
+  margin-top: 16px;
+  background: #ffb300;
+  color: #111;
+  border: none;
+  padding: 12px 20px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .login-layout {
@@ -52,10 +128,12 @@
 }
 
 .site-info-col .site-name {
-  font-size: 28px;
-  font-weight: 700;
+  font-size: 40px;
+  font-weight: 800;
   color: #ffb300;
-  margin-top: 4px;
+  margin-top: 8px;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .change-site-btn {
@@ -65,10 +143,12 @@
   padding: 10px 0;
   cursor: pointer;
   font-size: 14px;
-  transition: background 0.2s;
+  transition: background 0.12s, color 0.12s;
+  border-radius: 6px;
 }
 .change-site-btn:hover {
-  background: #222;
+  background: rgba(255,255,255,0.03);
+  color: #fff;
 }
 .danger-btn {
   background: #c62828;
