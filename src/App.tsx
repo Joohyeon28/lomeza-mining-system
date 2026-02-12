@@ -7,7 +7,7 @@ import Dashboard from './pages/Dashboard'
 import LiveSite from './pages/LiveSite'
 import SupervisorReview from './pages/SupervisorReview'
 import Workshop from './pages/Workshop'
-import Exception from './pages/Exception'
+import Exceptions from './pages/Exceptions'
 
 // Controller pages
 import ControllerDashboard from './pages/ControllerDashboard'
@@ -57,7 +57,7 @@ function App() {
           path="/exceptions"
           element={
             <ProtectedRoute>
-              <Exception />
+              <Exceptions />
             </ProtectedRoute>
           }
         />
