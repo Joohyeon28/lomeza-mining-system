@@ -1,19 +1,46 @@
-import { ReactElement } from 'react'
-import { Navigate, useLocation, useParams } from 'react-router-dom'
+import { type ReactElement } from 'react'
+import { Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
-export default function ProtectedRoute({ children, requireSite = false }: { children: ReactElement; requireSite?: boolean }) {
-  const { user, loading, site } = useAuth()
+// Define which roles can access which paths
+const roleAccess: Record<string, string[]> = {
+  // Admin / Supervisor
+  '/dashboard': ['Admin', 'Supervisor'],
+  '/live-site': ['Admin', 'Supervisor'],
+  '/supervisor-review': ['Admin', 'Supervisor'],
+  '/workshop': ['Admin'],
+  '/exceptions': ['Admin', 'Supervisor'],
+
+  // Controller
+  '/controller-dashboard': ['Controller'],
+  '/production-input': ['Controller'],
+  '/hourly-logging': ['Controller'],
+}
+
+export default function ProtectedRoute({ children }: { children: ReactElement }) {
+  const { user, role, loading } = useAuth()
   const location = useLocation()
-  const params = useParams()
 
-  if (loading) return <div>Loading...</div>
-  if (!user) return <Navigate to="/login" state={{ from: location }} replace />
+  if (loading) {
+    return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>
+  }
 
-  if (requireSite) {
-    const routeSite = (params as any).siteId
-    if (!site) return <div>Access denied: no site assigned to user</div>
-    if (routeSite && routeSite !== site) return <div>Access denied for this site</div>
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  // Check role-based access for the current path
+  const allowedRoles = roleAccess[location.pathname]
+  if (allowedRoles && !allowedRoles.includes(role || '')) {
+    // Redirect to appropriate dashboard based on role
+    if (role === 'Admin' || role === 'Supervisor') {
+      return <Navigate to="/dashboard" replace />
+    } else if (role === 'Controller') {
+      return <Navigate to="/controller-dashboard" replace />
+    } else {
+      // Fallback for users with no recognised role
+      return <Navigate to="/login" replace />
+    }
   }
 
   return children

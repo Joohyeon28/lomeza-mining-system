@@ -1,0 +1,83 @@
+/* =========================
+   SITE SELECTION / LOGIN LAYOUT
+========================= */
+.login-card {
+  max-width: 720px; /* wider when site is selected */
+}
+
+.site-selector {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  margin: 30px 0;
+}
+
+.site-btn {
+  background: #1a1a1a;
+  border: 2px solid #333;
+  padding: 16px 32px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #ffb300;
+  cursor: pointer;
+  flex: 1;
+  transition: border-color 0.2s;
+}
+.site-btn:hover {
+  border-color: #ffb300;
+}
+
+.login-layout {
+  display: flex;
+  gap: 40px;
+}
+
+.login-form-col {
+  flex: 1.2;
+}
+
+.site-info-col {
+  flex: 0.8;
+  border-left: 1px solid #333;
+  padding-left: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.site-info-col .site-label {
+  color: #aaa;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.site-info-col .site-name {
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffb300;
+  margin-top: 4px;
+}
+
+.change-site-btn {
+  background: transparent;
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 10px 0;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+.change-site-btn:hover {
+  background: #222;
+}
+.danger-btn {
+  background: #c62828;
+  color: #fff;
+  border: none;
+  padding: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.danger-btn:hover {
+  background: #b71c1c;
+}
