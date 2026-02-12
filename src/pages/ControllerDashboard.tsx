@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { useDb } from '../hooks/useDB'
+import { useDb } from '../hooks/useDb'
 import Layout from '../components/Layout'
 
 interface ProductionEntry {
