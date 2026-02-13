@@ -4,7 +4,7 @@ import { useDb } from '../hooks/useDb'
 import Layout from '../components/Layout'
 
 interface ProductionEntry {
-  id: string
+  id: string | number
   machine_id: string
   shift_date: string
   hour: number
@@ -15,11 +15,18 @@ interface ProductionEntry {
   assets: { asset_code: string }[] | null  // joined from foreign key
 }
 
+interface Stats {
+  total: number
+  approved: number
+  pending: number
+  rejected: number
+}
+
 export default function ControllerDashboard() {
   const { user, site } = useAuth()
   const getDb = useDb()
   const [entries, setEntries] = useState<ProductionEntry[]>([])
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<Stats>({
     total: 0,
     approved: 0,
     pending: 0,
@@ -28,11 +35,19 @@ export default function ControllerDashboard() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!user) return
+    if (!user || !site) return
 
     const fetchTodayEntries = async () => {
       const today = new Date().toISOString().split('T')[0]
-        const db = getDb() // get Supabase client with site schema
+      let db
+      try {
+        db = getDb() // get Supabase client with site schema
+      } catch (err: unknown) {
+        console.error('Unable to get DB client:', err)
+        setLoading(false)
+        return
+      }
+
       const { data, error } = await db
         .from('production_entries')
         .select(`
@@ -50,21 +65,28 @@ export default function ControllerDashboard() {
         .eq('shift_date', today)
         .order('hour', { ascending: true })
 
-      if (error) console.error(error)
+      if (error) {
+        console.error(error)
+        setLoading(false)
+        return
+      }
+
       if (data) {
-        setEntries(data)
+        // Cast data to ProductionEntry[] to avoid implicit any in filters
+        const typedData = data as ProductionEntry[]
+        setEntries(typedData)
         setStats({
-          total: data.length,
-          approved: data.filter(e => e.status === 'APPROVED').length,
-          pending: data.filter(e => e.status === 'PENDING').length,
-          rejected: data.filter(e => e.status === 'REJECTED').length,
+          total: typedData.length,
+          approved: typedData.filter(e => e.status === 'APPROVED').length,
+          pending: typedData.filter(e => e.status === 'PENDING').length,
+          rejected: typedData.filter(e => e.status === 'REJECTED').length,
         })
       }
       setLoading(false)
     }
 
     fetchTodayEntries()
-  }, [user])
+  }, [user, site, getDb])
 
   return (
     <Layout activePage="/controller-dashboard">
@@ -120,7 +142,7 @@ export default function ControllerDashboard() {
             </thead>
             <tbody>
               {entries.map(entry => (
-                <tr key={entry.id}>
+                <tr key={String(entry.id)}>
                   <td className="machine-id">
                     {entry.assets?.[0]?.asset_code || entry.machine_id}
                   </td>

@@ -58,7 +58,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   async function signIn(email: string, password: string, selectedSite: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    let signInResult
+    try {
+      signInResult = await supabase.auth.signInWithPassword({ email, password })
+    } catch (err: any) {
+      console.error('Network error during signInWithPassword:', err)
+      throw new Error('Network error contacting authentication service. Check your Supabase URL or start the local Supabase emulator.')
+    }
+
+    const { error } = signInResult
     if (error) throw error
 
     // After login, fetch the user's profile to verify site
