@@ -9,6 +9,7 @@ const roleAccess: Record<string, string[]> = {
   '/live-site': ['Admin', 'Supervisor'],
   '/supervisor-review': ['Admin', 'Supervisor'],
   '/workshop': ['Admin'],
+  '/workshop/assets': ['Admin'],
   '/exceptions': ['Admin', 'Supervisor'],
 
   // Controller

@@ -7,6 +7,7 @@ interface AuthContextType {
   role: string | null
   site: string | null
   loading: boolean
+  canAccessWorkshop: () => boolean
   signIn: (email: string, password: string, selectedSite: string) => Promise<void>
   signOut: () => Promise<void>
   // Returns a Supabase client pre‑configured with the user’s site schema
@@ -20,6 +21,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [role, setRole] = useState<string | null>(null)
   const [site, setSite] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const canAccessWorkshop = () => {
+  return role === 'Admin' // Add other roles here later (e.g., 'WorkshopManager')
+}
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -88,10 +92,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   return (
-    <AuthContext.Provider value={{ user, role, site, loading, signIn, signOut, getDb }}>
+    <AuthContext.Provider value={{ user, role, site, loading, canAccessWorkshop, signIn, signOut, getDb }}>
       {children}
     </AuthContext.Provider>
   )
 }
+
+
 
 export const useAuth = () => useContext(AuthContext)

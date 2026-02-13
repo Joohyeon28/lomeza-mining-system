@@ -7,6 +7,7 @@ import Dashboard from './pages/Dashboard'
 import LiveSite from './pages/LiveSite'
 import SupervisorReview from './pages/SupervisorReview'
 import Workshop from './pages/Workshop'
+import WorkshopAssets from './pages/WorkshopsAssets'
 import Exceptions from './pages/Exceptions'
 
 // Controller pages
@@ -50,6 +51,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Workshop />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/workshop/assets"
+          element={
+            <ProtectedRoute>
+              <WorkshopAssets />
             </ProtectedRoute>
           }
         />

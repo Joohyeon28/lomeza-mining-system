@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useDb } from '../hooks/useDb'
+import { supabase, getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
 
 // ---------- Types ----------
@@ -46,15 +47,59 @@ export default function ProductionInput() {
         .select('id, asset_code, asset_type, machine_role')
         .eq('site', site)
         .eq('status', 'ACTIVE') // only active machines
-      if (data) setAvailableMachines(data as Machine[])
+      if (data)
+        setAvailableMachines(
+          (data as any[]).map(d => ({ ...d, id: String(d.id) })) as Machine[]
+        )
     }
 
     fetchMachines()
   }, [site])
 
   const handleDailyPlanConfirm = (types: string[]) => {
-    setSelectedTypes(types)
-    setStep(2)
+    // Fetch available assets from the sileko.assets table matching the
+    // selected asset types. We use the site-scoped DB (getDb) but query
+    // the fully-qualified `sileko.assets` table so the central asset
+    // registry is used.
+    const fetchForTypes = async () => {
+      setSelectedTypes(types)
+      try {
+        // Use the global `supabase` client to query central registries
+        // (avoid site-scoped client prefixing table names with the site schema).
+        const selectedSite = site?.toLowerCase() || ''
+        let registryTable = 'sileko.assets'
+        if (selectedSite === 'kalagadi') registryTable = 'kalagadi.assets'
+        else if (selectedSite === 'sileko') registryTable = 'sileko.assets'
+
+        // Query the registry using a client scoped to the registry schema
+        // so we can call `.from('assets')` (avoids dotted table-name issues).
+        const registrySchema = registryTable.split('.')[0]
+        const registryClient = getClientForSchema(registrySchema)
+        const { data, error } = await registryClient
+          .from('assets')
+          .select('id, asset_code, asset_type, machine_role')
+          .in('asset_type', types)
+          .eq('status', 'ACTIVE')
+
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.error(`Error fetching assets from ${registryTable}`, error)
+          setAvailableMachines([])
+        } else {
+          setAvailableMachines(
+            ((data as any[]) || []).map(d => ({ ...d, id: String(d.id) })) as Machine[]
+          )
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Unexpected error fetching assets', err)
+        setAvailableMachines([])
+      } finally {
+        setStep(2)
+      }
+    }
+
+    void fetchForTypes()
   }
 
   const handleMaterialAssign = (newAssignments: typeof assignments) => {
@@ -86,8 +131,8 @@ export default function ProductionInput() {
           onNext={handleMaterialAssign}
           onBack={() => setStep(1)}
           machines={availableMachines.filter(m =>
-            selectedTypes.includes(m.machine_role)
-          )}
+              selectedTypes.includes(m.asset_type)
+            )}
           initialAssignments={assignments}
         />
       )}
