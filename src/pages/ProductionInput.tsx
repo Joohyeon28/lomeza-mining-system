@@ -22,6 +22,8 @@ export default function ProductionInput() {
   const [step, setStep] = useState(1)
   const [selectedTypes, setSelectedTypes] = useState<string[]>([])
   const [availableMachines, setAvailableMachines] = useState<Machine[]>([])
+  const [loadingMachines, setLoadingMachines] = useState(false)
+  const [registrySamples, setRegistrySamples] = useState<{ schema: string; rows: any[] }[]>([])
   const [assignments, setAssignments] = useState<{
     OB: string[]
     OB_REHAB: string[]
@@ -39,18 +41,31 @@ export default function ProductionInput() {
       setAvailableMachines([])
       return
     }
-
     const fetchMachines = async () => {
-      const db = getDb()
-      const { data } = await db
-        .from('assets')
-        .select('id, asset_code, asset_type, machine_role')
-        .eq('site', site)
-        .eq('status', 'ACTIVE') // only active machines
-      if (data)
-        setAvailableMachines(
-          (data as any[]).map(d => ({ ...d, id: String(d.id) })) as Machine[]
-        )
+      setLoadingMachines(true)
+      try {
+        const db = getDb()
+        const { data, error } = await db
+          .from('assets')
+          .select('id, asset_code, asset_type, machine_role')
+          .eq('site', site)
+          .eq('status', 'ACTIVE') // only active machines
+        if (error) {
+          console.error('Error fetching site assets:', error)
+          setAvailableMachines([])
+        } else if (data) {
+          setAvailableMachines(
+            (data as any[]).map(d => ({ ...d, id: String(d.id) })) as Machine[]
+          )
+        } else {
+          setAvailableMachines([])
+        }
+      } catch (err) {
+        console.error('Unexpected error fetching site assets', err)
+        setAvailableMachines([])
+      } finally {
+        setLoadingMachines(false)
+      }
     }
 
     fetchMachines()
@@ -63,38 +78,139 @@ export default function ProductionInput() {
     // registry is used.
     const fetchForTypes = async () => {
       setSelectedTypes(types)
+      setLoadingMachines(true)
       try {
-        // Use the global `supabase` client to query central registries
-        // (avoid site-scoped client prefixing table names with the site schema).
+        // Try multiple registry schemas so we find machines whether the
+        // central registry lives in the site schema, `public`, or a
+        // dedicated registry schema like `sileko`/`kalagadi`.
         const selectedSite = site?.toLowerCase() || ''
-        let registryTable = 'sileko.assets'
-        if (selectedSite === 'kalagadi') registryTable = 'kalagadi.assets'
-        else if (selectedSite === 'sileko') registryTable = 'sileko.assets'
+        const candidateSchemas = Array.from(
+          new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean)),
+        ) as string[]
 
-        // Query the registry using a client scoped to the registry schema
-        // so we can call `.from('assets')` (avoids dotted table-name issues).
-        const registrySchema = registryTable.split('.')[0]
-        const registryClient = getClientForSchema(registrySchema)
-        const { data, error } = await registryClient
-          .from('assets')
-          .select('id, asset_code, asset_type, machine_role')
-          .in('asset_type', types)
-          .eq('status', 'ACTIVE')
+        let found: any[] | null = null
+        // 1) Try matching by `machine_role` (preferred)
+        for (const schema of candidateSchemas) {
+          try {
+            console.info('Trying registry schema (machine_role):', schema)
+            const registryClient = getClientForSchema(schema)
+            const { data, error } = await registryClient
+              .from(`${schema}.assets`)
+              .select('id, asset_code, asset_type, machine_role')
+              .in('machine_role', types)
+              .eq('status', 'ACTIVE')
 
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error(`Error fetching assets from ${registryTable}`, error)
-          setAvailableMachines([])
-        } else {
+            if (error) {
+              console.warn(`No assets in schema ${schema} by machine_role (or error):`, error)
+              continue
+            }
+
+            if (data && (data as any[]).length > 0) {
+              found = data as any[]
+              console.info(`Found ${found.length} assets in schema ${schema} by machine_role`)
+              break
+            }
+          } catch (err) {
+            console.warn(`Error querying schema ${schema} by machine_role:`, err)
+          }
+        }
+
+        // 2) Fallback: try matching by `asset_type`
+        if (!found) {
+          for (const schema of candidateSchemas) {
+            try {
+              console.info('Trying registry schema (asset_type):', schema)
+              const registryClient = getClientForSchema(schema)
+              const { data, error } = await registryClient
+                  .from(`${schema}.assets`)
+                .select('id, asset_code, asset_type, machine_role')
+                .in('asset_type', types)
+                .eq('status', 'ACTIVE')
+
+              if (error) {
+                console.warn(`No assets in schema ${schema} by asset_type (or error):`, error)
+                continue
+              }
+
+              if (data && (data as any[]).length > 0) {
+                found = data as any[]
+                console.info(`Found ${found.length} assets in schema ${schema} by asset_type`)
+                break
+              }
+            } catch (err) {
+              console.warn(`Error querying schema ${schema} by asset_type:`, err)
+            }
+          }
+        }
+
+        // 3) Fallback: try ilike searches on asset_type and asset_code for each type
+        if (!found) {
+          for (const schema of candidateSchemas) {
+            try {
+              const registryClient = getClientForSchema(schema)
+              for (const t of types) {
+                try {
+                  console.info(`Trying ilike on schema ${schema} for type '${t}'`)
+                  const pattern = `%${t.toLowerCase()}%`
+                  const { data, error } = await registryClient
+                    .from(`${schema}.assets`)
+                    .select('id, asset_code, asset_type, machine_role')
+                    .or(`asset_type.ilike.${pattern},asset_code.ilike.${pattern}`)
+                    .eq('status', 'ACTIVE')
+
+                  if (error) {
+                    console.warn(`No ilike matches in schema ${schema} for '${t}':`, error)
+                    continue
+                  }
+
+                  if (data && (data as any[]).length > 0) {
+                    found = data as any[]
+                    console.info(`Found ${found.length} assets in schema ${schema} by ilike '${t}'`)
+                    break
+                  }
+                } catch (err) {
+                  console.warn(`Error ilike querying schema ${schema} for '${t}':`, err)
+                }
+              }
+              if (found) break
+            } catch (err) {
+              console.warn(`Error querying schema ${schema} during ilike pass:`, err)
+            }
+          }
+        }
+
+        if (found) {
           setAvailableMachines(
-            ((data as any[]) || []).map(d => ({ ...d, id: String(d.id) })) as Machine[]
+            found.map(d => ({ ...d, id: String(d.id) })) as Machine[]
           )
+        } else {
+          console.info('No registry assets found in any candidate schema')
+          setAvailableMachines([])
+
+          // For debugging: fetch a small sample from each candidate schema
+          const samples: { schema: string; rows: any[] }[] = []
+          for (const schema of candidateSchemas) {
+            try {
+              const client = getClientForSchema(schema)
+              // fetch a few rows to inspect available fields/values
+              // eslint-disable-next-line no-await-in-loop
+              const { data: sampleData } = await client
+                  .from(`${schema}.assets`)
+                .select('id, asset_code, asset_type, machine_role')
+                .limit(10)
+              samples.push({ schema, rows: (sampleData as any[]) || [] })
+            } catch (err) {
+              samples.push({ schema, rows: [] })
+            }
+          }
+          setRegistrySamples(samples)
         }
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('Unexpected error fetching assets', err)
         setAvailableMachines([])
       } finally {
+        setLoadingMachines(false)
         setStep(2)
       }
     }
@@ -126,16 +242,22 @@ export default function ProductionInput() {
           initialSelected={selectedTypes}
         />
       )}
-      {step === 2 && (
-        <MaterialAssignmentStep
-          onNext={handleMaterialAssign}
-          onBack={() => setStep(1)}
-          machines={availableMachines.filter(m =>
-              selectedTypes.includes(m.asset_type)
-            )}
-          initialAssignments={assignments}
-        />
-      )}
+          {step === 2 && (
+            <MaterialAssignmentStep
+              onNext={handleMaterialAssign}
+              onBack={() => setStep(1)}
+              machines={availableMachines.filter(m =>
+                  selectedTypes.includes(m.asset_type) || selectedTypes.includes(m.machine_role)
+                )}
+              initialAssignments={assignments}
+              loading={loadingMachines}
+              onRetry={() => {
+                // simple retry: re-run the confirm handler to fetch again
+                handleDailyPlanConfirm(selectedTypes)
+              }}
+              registrySamples={registrySamples}
+            />
+          )}
       {step === 3 && (
         <DistanceStep
           onNext={handleDistancesConfirm}
@@ -213,7 +335,10 @@ function MaterialAssignmentStep({
   onBack,
   machines,
   initialAssignments,
-}: { onNext: (a: any) => void; onBack?: () => void; machines: Machine[]; initialAssignments: any }) {
+  loading,
+  onRetry,
+  registrySamples,
+}: { onNext: (a: any) => void; onBack?: () => void; machines: Machine[]; initialAssignments: any; loading?: boolean; onRetry?: () => void; registrySamples?: { schema: string; rows: any[] }[] }) {
   const [assignments, setAssignments] = useState(initialAssignments)
 
   const toggleMachine = (material: keyof typeof assignments, machineId: string) => {
@@ -240,39 +365,64 @@ function MaterialAssignmentStep({
   return (
     <section id="material-assignment">
       <h2>Assign Machines to Material</h2>
-
-      <div className="material-grid">
-        {['OB', 'OB_REHAB', 'COAL'].map(material => (
-          <div key={material} className="material-column">
-            <h3>
-              {material === 'OB' && 'OB (Mining)'}
-              {material === 'OB_REHAB' && 'OB (Rehabilitation)'}
-              {material === 'COAL' && 'Coal'}
-            </h3>
-            <div className="machine-list">
-              {machines.map(machine => (
-                <label
-                  key={machine.id}
-                  className={`machine-card ${
-                    isAssignedElsewhere(machine.id, material) ? 'disabled' : ''
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={assignments[material]?.includes(machine.id) || false}
-                    onChange={() => toggleMachine(material, machine.id)}
-                    disabled={isAssignedElsewhere(machine.id, material)}
-                  />
-                  <span className="machine-label">{machine.asset_code}</span>
-                  <span className={`machine-role role-${machine.machine_role}`}>
-                    {machine.machine_role}
-                  </span>
-                </label>
-              ))}
-            </div>
+      {loading ? (
+        <div className="empty-state">Loading machines…</div>
+      ) : machines.length === 0 ? (
+        <div className="empty-state">
+          <p>No machines were found for the selected roles.</p>
+          <div className="nav-actions">
+            <button className="secondary-btn" onClick={onBack}>← Back</button>
+            <button className="submit-btn" onClick={onRetry}>Retry</button>
           </div>
-        ))}
-      </div>
+        </div>
+      ) : (
+        <div className="material-grid">
+          {['OB', 'OB_REHAB', 'COAL'].map(material => (
+            <div key={material} className="material-column">
+              <h3>
+                {material === 'OB' && 'OB (Mining)'}
+                {material === 'OB_REHAB' && 'OB (Rehabilitation)'}
+                {material === 'COAL' && 'Coal'}
+              </h3>
+              <div className="machine-list">
+                {machines.map(machine => (
+                  <label
+                    key={machine.id}
+                    className={`machine-card ${
+                      isAssignedElsewhere(machine.id, material) ? 'disabled' : ''
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={assignments[material]?.includes(machine.id) || false}
+                      onChange={() => toggleMachine(material, machine.id)}
+                      disabled={isAssignedElsewhere(machine.id, material)}
+                    />
+                    <span className="machine-label">{machine.asset_code}</span>
+                    <span className={`machine-role role-${machine.machine_role}`}>
+                      {machine.machine_role}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Debug: show sample rows from registry schemas when available */}
+      {registrySamples && registrySamples.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <h4>Registry samples (debug)</h4>
+          {registrySamples.map(s => (
+            <div key={s.schema} style={{ marginBottom: 8 }}>
+              <strong>{s.schema}</strong>
+              <pre style={{ maxHeight: 120, overflow: 'auto' }}>{JSON.stringify(s.rows, null, 2)}</pre>
+            </div>
+          ))}
+        </div>
+      )}
+      
 
       <div className="nav-actions">
         <button type="button" className="secondary-btn" onClick={onBack}>
