@@ -30,13 +30,14 @@ export default function ProtectedRoute({ children }: { children: ReactElement })
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
-  // Check role-based access for the current path
+  // Check role-based access for the current path (case-insensitive)
   const allowedRoles = roleAccess[location.pathname]
-  if (allowedRoles && !allowedRoles.includes(role || '')) {
-    // Redirect to appropriate dashboard based on role
-    if (role === 'Admin' || role === 'Supervisor') {
+  const normalizedRole = role ? role.toLowerCase() : ''
+  if (allowedRoles && !allowedRoles.map(r => r.toLowerCase()).includes(normalizedRole)) {
+    // Redirect to appropriate dashboard based on role (case-insensitive)
+    if (normalizedRole === 'admin' || normalizedRole === 'supervisor') {
       return <Navigate to="/dashboard" replace />
-    } else if (role === 'Controller') {
+    } else if (normalizedRole === 'controller') {
       return <Navigate to="/controller-dashboard" replace />
     } else {
       // Fallback for users with no recognised role

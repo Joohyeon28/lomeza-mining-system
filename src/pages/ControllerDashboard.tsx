@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useDb } from '../hooks/useDb'
+import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
+import LogDetailModal from '../components/LogDetailModal'
 
 interface ProductionEntry {
   id: string | number
@@ -33,6 +35,8 @@ export default function ControllerDashboard() {
     rejected: 0,
   })
   const [loading, setLoading] = useState(true)
+  const [viewEntry, setViewEntry] = useState<any | null>(null)
+  const [viewBreakdown, setViewBreakdown] = useState<any | null>(null)
 
   useEffect(() => {
     if (!user || !site) return
@@ -74,12 +78,47 @@ export default function ControllerDashboard() {
       if (data) {
         // Cast data to ProductionEntry[] to avoid implicit any in filters
         const typedData = data as ProductionEntry[]
-        setEntries(typedData)
+
+        // If embedded `assets` is missing, try to resolve asset_code from candidate schemas
+        const missingIds = Array.from(new Set(
+          typedData.filter(e => !(e.assets && e.assets.length)).map(e => e.machine_id).filter(Boolean)
+        ))
+
+        let filled = typedData
+        if (missingIds.length > 0) {
+          const selectedSite = site?.toLowerCase() || ''
+          const candidateSchemas = Array.from(new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean))) as string[]
+          const assetsById: Record<string, any> = {}
+
+          for (const schema of candidateSchemas) {
+            if (Object.keys(assetsById).length === missingIds.length) break
+            try {
+              const client = getClientForSchema(schema)
+              const { data: assets } = await client
+                .from('assets')
+                .select('id, asset_code')
+                .in('id', missingIds)
+
+              if (assets && (assets as any[]).length > 0) {
+                for (const a of assets as any[]) assetsById[String(a.id)] = a
+              }
+            } catch (e) {
+              // ignore schema errors and continue
+            }
+          }
+
+          filled = typedData.map(entry => ({
+            ...entry,
+            assets: entry.assets && entry.assets.length ? entry.assets : (assetsById[String(entry.machine_id)] ? [assetsById[String(entry.machine_id)]] : null),
+          }))
+        }
+
+        setEntries(filled)
         setStats({
-          total: typedData.length,
-          approved: typedData.filter(e => e.status === 'APPROVED').length,
-          pending: typedData.filter(e => e.status === 'PENDING').length,
-          rejected: typedData.filter(e => e.status === 'REJECTED').length,
+          total: filled.length,
+          approved: filled.filter(e => e.status === 'APPROVED').length,
+          pending: filled.filter(e => e.status === 'PENDING').length,
+          rejected: filled.filter(e => e.status === 'REJECTED').length,
         })
       }
       setLoading(false)
@@ -87,6 +126,99 @@ export default function ControllerDashboard() {
 
     fetchTodayEntries()
   }, [user, site, getDb])
+
+  const handleRowClick = async (entry: ProductionEntry) => {
+    const db = getDb()
+    try {
+      // Query breakdowns for the whole shift_date (day) to be robust to timezone/storage differences
+      const dayStart = new Date(entry.shift_date + 'T00:00:00').toISOString()
+      const dayEnd = new Date(entry.shift_date + 'T23:59:59.999').toISOString()
+      const { data, error } = await db
+        .from('breakdowns')
+        .select('*')
+        .eq('asset_id', entry.machine_id)
+        .gte('breakdown_start', dayStart)
+        .lte('breakdown_start', dayEnd)
+        .order('breakdown_start', { ascending: false })
+        .limit(1)
+
+      if (error) console.warn('Breakdown lookup failed', error)
+
+      // Debug fetched entry + breakdown for troubleshooting
+      // eslint-disable-next-line no-console
+      console.debug('Controller view entry', entry, 'breakdownCandidate', data && (data as any[])[0], 'error', error)
+
+      setViewEntry(entry)
+      // If no breakdown found in the day-range, try a fallback to the latest breakdown for this asset
+      if (data && (data as any[]).length) {
+        let bd = (data as any[])[0]
+        // resolve reporter name if possible
+        if (bd.reported_by) {
+          try {
+            const selectedSite = site?.toLowerCase() || ''
+            const candidateSchemas = Array.from(new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean))) as string[]
+            for (const schema of candidateSchemas) {
+              try {
+                const client = getClientForSchema(schema)
+                const { data: udata } = await client.from('users').select('id,name,email').eq('id', bd.reported_by).limit(1)
+                if (udata && (udata as any[]).length > 0) {
+                  const u = (udata as any[])[0]
+                  bd.reporter_name = u.name || u.email || u.id
+                  break
+                }
+              } catch (e) {
+                // ignore and continue
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+        setViewBreakdown(bd)
+      } else {
+        try {
+          const { data: latestData, error: latestError } = await db
+            .from('breakdowns')
+            .select('*')
+            .eq('asset_id', entry.machine_id)
+            .order('breakdown_start', { ascending: false })
+            .limit(1)
+
+          if (latestError) console.warn('Latest breakdown fallback failed', latestError)
+          let latest = latestData && (latestData as any[]).length ? (latestData as any[])[0] : null
+          if (latest && latest.reported_by) {
+            try {
+              const selectedSite = site?.toLowerCase() || ''
+              const candidateSchemas = Array.from(new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean))) as string[]
+              for (const schema of candidateSchemas) {
+                try {
+                  const client = getClientForSchema(schema)
+                  const { data: udata } = await client.from('users').select('id,name,email').eq('id', latest.reported_by).limit(1)
+                  if (udata && (udata as any[]).length > 0) {
+                    const u = (udata as any[])[0]
+                    latest.reporter_name = u.name || u.email || u.id
+                    break
+                  }
+                } catch (e) {
+                  // ignore
+                }
+              }
+            } catch (e) {
+              // ignore
+            }
+          }
+          setViewBreakdown(latest)
+        } catch (e) {
+          console.error('Failed to run latest-breakdown fallback', e)
+          setViewBreakdown(null)
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load breakdown', e)
+      setViewEntry(entry)
+      setViewBreakdown(null)
+    }
+  }
 
   return (
     <Layout activePage="/controller-dashboard">
@@ -141,26 +273,36 @@ export default function ControllerDashboard() {
               </tr>
             </thead>
             <tbody>
-              {entries.map(entry => (
-                <tr key={String(entry.id)}>
-                  <td className="machine-id">
-                    {entry.assets?.[0]?.asset_code || entry.machine_id}
-                  </td>
-                  <td>{entry.hour}:00</td>
-                  <td>{entry.activity}</td>
-                  <td>{entry.number_of_loads || '-'}</td>
-                  <td>{entry.haul_distance || '-'}</td>
-                  <td>
-                    <span className={`status-badge ${entry.status.toLowerCase()}`}>
-                      {entry.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+                {entries.map(entry => (
+                  <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
+                    <td className="machine-id">
+                      {entry.assets?.[0]?.asset_code || entry.machine_id}
+                    </td>
+                    <td>{entry.hour}:00</td>
+                    <td>{entry.activity}</td>
+                    <td>{entry.number_of_loads || '-'}</td>
+                    <td>{entry.haul_distance || '-'}</td>
+                    <td>
+                      <span className={`status-badge ${entry.status.toLowerCase()}`}>
+                        {entry.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         )}
       </section>
+        {viewEntry && (
+          <LogDetailModal
+            entry={viewEntry}
+            breakdown={viewBreakdown || undefined}
+            onClose={() => {
+              setViewEntry(null)
+              setViewBreakdown(null)
+            }}
+          />
+        )}
     </Layout>
   )
 }

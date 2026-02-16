@@ -6,6 +6,7 @@ interface AuthContextType {
   user: User | null
   role: string | null
   site: string | null
+  displayName: string | null
   loading: boolean
   canAccessWorkshop: () => boolean
   signIn: (email: string, password: string, selectedSite: string) => Promise<void>
@@ -20,9 +21,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null)
   const [role, setRole] = useState<string | null>(null)
   const [site, setSite] = useState<string | null>(null)
+  const [displayName, setDisplayName] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const canAccessWorkshop = () => {
-  return role === 'Admin' // Add other roles here later (e.g., 'WorkshopManager')
+  return role?.toLowerCase() === 'admin' // Add other roles here later (e.g., 'workshopmanager')
 }
 
   useEffect(() => {
@@ -48,12 +50,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Always query public.users
     const { data, error } = await supabase
       .from('users')
-      .select('role, site')
+      .select('*')
       .eq('id', userId)
       .single()
     if (data) {
-      setRole(data.role)
-      setSite(data.site)
+      // Normalize role/site to lowercase to avoid case-matching issues
+      setRole(typeof data.role === 'string' ? data.role.toLowerCase() : data.role)
+      setSite(typeof data.site === 'string' ? data.site.toLowerCase() : data.site)
+      // Try common name fields from the profile row
+      const name = data.full_name || data.name || (data.first_name ? `${data.first_name}${data.last_name ? ' ' + data.last_name : ''}` : null) || null
+      setDisplayName(name)
     }
   }
 
@@ -81,7 +87,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       throw new Error('User profile not found.')
     }
 
-    if (userData.site !== selectedSite) {
+    // Compare site case-insensitively
+    const profileSite = typeof userData.site === 'string' ? userData.site.toLowerCase() : userData.site
+    const requestedSite = typeof selectedSite === 'string' ? selectedSite.toLowerCase() : selectedSite
+    if (profileSite !== requestedSite) {
       await supabase.auth.signOut()
       throw new Error(`You are not registered under ${selectedSite}.`)
     }
@@ -100,7 +109,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   return (
-    <AuthContext.Provider value={{ user, role, site, loading, canAccessWorkshop, signIn, signOut, getDb }}>
+    <AuthContext.Provider value={{ user, role, site, displayName, loading, canAccessWorkshop, signIn, signOut, getDb }}>
       {children}
     </AuthContext.Provider>
   )

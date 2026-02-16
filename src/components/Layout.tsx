@@ -8,12 +8,13 @@ interface LayoutProps {
 }
 
 export default function Layout({ children, activePage }: LayoutProps) {
-  const { user, role, site, signOut } = useAuth()
+  const { user, role, site, displayName, signOut } = useAuth()
   const navigate = useNavigate()
 
   // Determine navigation links based on role
   const navLinks = (() => {
-    if (role === 'Admin' || role === 'Supervisor') {
+    const normalized = role ? role.toLowerCase() : ''
+    if (normalized === 'admin' || normalized === 'supervisor') {
       return [
         { path: '/dashboard', label: 'Dashboard' },
         { path: '/live-site', label: 'Live Site' },
@@ -21,7 +22,7 @@ export default function Layout({ children, activePage }: LayoutProps) {
         { path: '/workshop', label: 'Workshop' },
         { path: '/exceptions', label: 'Exceptions' }
       ]
-    } else if (role === 'Controller') {
+    } else if (normalized === 'controller') {
       return [
         { path: '/controller-dashboard', label: 'My Dashboard' },
         { path: '/production-input', label: 'Production Input' },
@@ -59,12 +60,12 @@ export default function Layout({ children, activePage }: LayoutProps) {
 
         <div className="sidebar-footer">
           <div className="user-box">
-            <div id="user-name">{user?.email?.split('@')[0] || ''}</div>
-            <div id="user-role">{role || ''}</div>
+            <div id="user-name">{displayName ?? (user?.email?.split('@')[0] || '')}</div>
+            <div id="user-role">{role ? (role.charAt(0).toUpperCase() + role.slice(1).toLowerCase()) : ''}</div>
           </div>
-          <div className="logout" onClick={handleLogout}>
+          <button type="button" className="logout" onClick={handleLogout}>
             Logout
-          </div>
+          </button>
         </div>
       </aside>
 

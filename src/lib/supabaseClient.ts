@@ -10,7 +10,7 @@ if (typeof window !== 'undefined') {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 export const getSupabaseWithSchema = (_schema: string) => {
-  return supabase
+  return supabase.schema(_schema)
 }
 
-export const getClientForSchema = (_schema: string) => supabase
+export const getClientForSchema = (_schema: string) => supabase.schema(_schema)
