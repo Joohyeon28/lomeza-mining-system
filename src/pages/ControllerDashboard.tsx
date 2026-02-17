@@ -37,11 +37,107 @@ export default function ControllerDashboard() {
   const [loading, setLoading] = useState(true)
   const [viewEntry, setViewEntry] = useState<any | null>(null)
   const [viewBreakdown, setViewBreakdown] = useState<any | null>(null)
+  const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({})
+  const [timeframe, setTimeframe] = useState<'shift' | 'week' | 'month' | 'all'>('shift')
+  const [shiftMode, setShiftMode] = useState<'full' | 'shiftA' | 'shiftB' | 'current'>('current')
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  })
+  const [selectedWeek, setSelectedWeek] = useState<string>(() => {
+    const getISOWeek = (dt: Date) => {
+      const tmp = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()))
+      tmp.setUTCDate(tmp.getUTCDate() + 3 - ((tmp.getUTCDay() + 6) % 7))
+      const week1 = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 4))
+      const weekNo = 1 + Math.round(((tmp.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getUTCDay() + 6) % 7)) / 7)
+      return `${tmp.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
+    }
+    const w = getISOWeek(new Date())
+    return w
+  })
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const d = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
+  })
+
+  const getISOWeek = (dt: Date) => {
+    const tmp = new Date(dt.getTime())
+    tmp.setHours(0, 0, 0, 0)
+    tmp.setDate(tmp.getDate() + 3 - ((tmp.getDay() + 6) % 7))
+    const week1 = new Date(tmp.getFullYear(), 0, 4)
+    const weekNo = 1 + Math.round(((tmp.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
+    return `${tmp.getFullYear()}-W${String(weekNo).padStart(2, '0')}`
+  }
+
+  const parseISOWeekToRange = (isoWeek: string) => {
+    // isoWeek: "YYYY-Www" e.g. 2026-W07
+    const m = isoWeek.match(/(\d{4})-W(\d{2})/)
+    if (!m) return { start: new Date(0), end: new Date(0) }
+    const year = Number(m[1])
+    const week = Number(m[2])
+
+    // Find Monday of ISO week 1 (the week with Jan 4)
+    const jan4 = new Date(year, 0, 4)
+    const jan4Day = (jan4.getDay() + 6) % 7 // Monday=0
+    const mondayWeek1 = new Date(year, 0, 4 - jan4Day)
+
+    const start = new Date(mondayWeek1)
+    start.setDate(mondayWeek1.getDate() + (week - 1) * 7)
+    start.setHours(0, 0, 0, 0)
+
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    end.setHours(23, 59, 59, 999)
+
+    return { start, end }
+  }
+
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const localToday = (() => {
+    const t = new Date()
+    return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`
+  })()
+
+  const isInTimeframe = (e: ProductionEntry) => {
+    if (timeframe === 'all') return true
+
+    // parse shift_date as local date parts
+    const [ey, em, ed] = e.shift_date.split('-').map(Number)
+    const d = new Date(ey, (em || 1) - 1, ed || 1)
+
+    if (timeframe === 'shift') {
+      // support full day, explicit shifts, or the 'current' shift
+      const hour = Number(e.hour)
+      if (shiftMode === 'full') return e.shift_date === selectedDate
+      if (shiftMode === 'shiftA') return e.shift_date === selectedDate && hour >= 6 && hour < 18
+      if (shiftMode === 'shiftB') return e.shift_date === selectedDate && (hour >= 18 || hour < 6)
+      // 'current' shift: determine current local shift and match
+      if (shiftMode === 'current') {
+        const now = new Date()
+        const h = now.getHours()
+        if (h >= 6 && h < 18) return e.shift_date === selectedDate && hour >= 6 && hour < 18
+        return e.shift_date === selectedDate && (hour >= 18 || hour < 6)
+      }
+      return e.shift_date === selectedDate
+    }
+    if (timeframe === 'week') {
+      // compare by ISO-week date range (Monday - Sunday)
+      const { start, end } = parseISOWeekToRange(selectedWeek)
+      return d >= start && d <= end
+    }
+    if (timeframe === 'month') {
+      const monthStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
+      return monthStr === selectedMonth
+    }
+    return true
+  }
 
   useEffect(() => {
     if (!user || !site) return
 
-    const fetchTodayEntries = async () => {
+    const fetchEntries = async () => {
       const today = new Date().toISOString().split('T')[0]
       let db
       try {
@@ -52,6 +148,7 @@ export default function ControllerDashboard() {
         return
       }
 
+      // Fetch recent production entries for this user (include past shifts)
       const { data, error } = await db
         .from('production_entries')
         .select(`
@@ -66,8 +163,9 @@ export default function ControllerDashboard() {
           assets ( asset_code )
         `)
         .eq('submitted_by', user.id)
-        .eq('shift_date', today)
+        .order('shift_date', { ascending: false })
         .order('hour', { ascending: true })
+        .limit(1000)
 
       if (error) {
         console.error(error)
@@ -75,7 +173,7 @@ export default function ControllerDashboard() {
         return
       }
 
-      if (data) {
+        if (data) {
         // Cast data to ProductionEntry[] to avoid implicit any in filters
         const typedData = data as ProductionEntry[]
 
@@ -120,12 +218,29 @@ export default function ControllerDashboard() {
           pending: filled.filter(e => e.status === 'PENDING').length,
           rejected: filled.filter(e => e.status === 'REJECTED').length,
         })
+
+        // Initialize collapsed state: expand today's group, collapse others
+        const dates = Array.from(new Set(filled.map(e => e.shift_date))).sort((a, b) => b.localeCompare(a))
+        const initCollapsed: Record<string, boolean> = {}
+        for (const d of dates) initCollapsed[d] = d !== localToday
+        setCollapsedDates(initCollapsed)
       }
       setLoading(false)
     }
 
-    fetchTodayEntries()
+    fetchEntries()
   }, [user, site, getDb])
+
+  useEffect(() => {
+    if (!entries || entries.length === 0) return
+    const filtered = entries.filter(isInTimeframe)
+    setStats({
+      total: filtered.length,
+      approved: filtered.filter(e => e.status === 'APPROVED').length,
+      pending: filtered.filter(e => e.status === 'PENDING').length,
+      rejected: filtered.filter(e => e.status === 'REJECTED').length,
+    })
+  }, [entries, timeframe, selectedDate, selectedWeek, selectedMonth, shiftMode])
 
   const handleRowClick = async (entry: ProductionEntry) => {
     const db = getDb()
@@ -220,6 +335,26 @@ export default function ControllerDashboard() {
     }
   }
 
+  const goToCurrent = () => {
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+    const monthStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`
+    setTimeframe('shift')
+    setShiftMode('current')
+    setSelectedDate(dateStr)
+    setSelectedWeek(getISOWeek(now))
+    setSelectedMonth(monthStr)
+
+    // expand today's group and collapse others
+    const dates = Array.from(new Set(entries.map(e => e.shift_date)))
+    const newCollapsed: Record<string, boolean> = {}
+    for (const d of dates) newCollapsed[d] = d !== dateStr
+    setCollapsedDates(newCollapsed)
+  }
+
+  const filteredEntries = entries.filter(isInTimeframe)
+
   return (
     <Layout activePage="/controller-dashboard">
       <div className="dashboard-header">
@@ -230,11 +365,56 @@ export default function ControllerDashboard() {
       </div>
 
       {/* METRIC CARDS */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+        <label style={{ color: '#333', fontSize: 14 }}>View:</label>
+        <select value={timeframe} onChange={e => setTimeframe(e.target.value as any)} style={{ padding: '6px 8px', borderRadius: 6 }}>
+          <option value="shift">Day</option>
+          <option value="week">Week</option>
+          <option value="month">Month</option>
+          <option value="all">All Time</option>
+        </select>
+
+        {timeframe === 'shift' && (
+          <>
+            <select value={shiftMode} onChange={e => setShiftMode(e.target.value as any)} style={{ padding: '6px 8px', borderRadius: 6 }}>
+              <option value="current">Current Shift</option>
+              <option value="full">Full Day</option>
+              <option value="shiftA">Shift A (06:00–17:59)</option>
+              <option value="shiftB">Shift B (18:00–05:59)</option>
+            </select>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={e => setSelectedDate(e.target.value)}
+              style={{ padding: '6px 8px', borderRadius: 6 }}
+            />
+          </>
+        )}
+
+        {timeframe === 'week' && (
+          <input
+            type="week"
+            value={selectedWeek}
+            onChange={e => setSelectedWeek(e.target.value)}
+            style={{ padding: '6px 8px', borderRadius: 6 }}
+          />
+        )}
+
+        {timeframe === 'month' && (
+          <input
+            type="month"
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(e.target.value)}
+            style={{ padding: '6px 8px', borderRadius: 6 }}
+          />
+        )}
+        <button onClick={goToCurrent} style={{ marginLeft: 8, padding: '6px 10px', borderRadius: 6, cursor: 'pointer' }} aria-label="Go to today and current shift">Today & Current Shift</button>
+      </div>
       <section className="metrics">
         <div className="metric-card">
           <div className="metric-title">TOTAL ENTRIES</div>
           <div className="metric-value">{stats.total}</div>
-          <div className="metric-sub">Submitted this shift</div>
+          <div className="metric-sub">{timeframe === 'shift' ? 'This shift' : timeframe === 'week' ? 'Last 7 days' : timeframe === 'month' ? 'Last 30 days' : 'All time'}</div>
         </div>
         <div className="metric-card">
           <div className="metric-title">APPROVED</div>
@@ -258,39 +438,98 @@ export default function ControllerDashboard() {
         <h2>Production History</h2>
         {loading ? (
           <p>Loading...</p>
-        ) : entries.length === 0 ? (
-          <p className="empty-state">No production entries logged today.</p>
+        ) : filteredEntries.length === 0 ? (
+          <p className="empty-state">{timeframe === 'shift' ? 'No production entries logged today.' : 'No production entries for the selected timeframe.'}</p>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>MACHINE</th>
-                <th>HOUR</th>
-                <th>ACTIVITY</th>
-                <th>LOADS</th>
-                <th>DIST (m)</th>
-                <th>STATUS</th>
-              </tr>
-            </thead>
-            <tbody>
-                {entries.map(entry => (
-                  <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
-                    <td className="machine-id">
-                      {entry.assets?.[0]?.asset_code || entry.machine_id}
-                    </td>
-                    <td>{entry.hour}:00</td>
-                    <td>{entry.activity}</td>
-                    <td>{entry.number_of_loads || '-'}</td>
-                    <td>{entry.haul_distance || '-'}</td>
-                    <td>
-                      <span className={`status-badge ${entry.status.toLowerCase()}`}>
-                        {entry.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
+          (() => {
+            const grouped = filteredEntries.reduce((acc: Record<string, ProductionEntry[]>, e) => {
+              ;(acc[e.shift_date] = acc[e.shift_date] || []).push(e)
+              return acc
+            }, {})
+            const sortedDates = Object.keys(grouped).sort((a, b) => b.localeCompare(a))
+            const todayStr = new Date().toISOString().split('T')[0]
+
+            return (
+              <div>
+                {sortedDates.map(date => {
+                  const group = grouped[date]
+                  const isCollapsed = collapsedDates[date] ?? (date !== todayStr)
+                  return (
+                    <div key={date} className="date-group">
+                      <div className="group-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                          <button
+                            onClick={() => setCollapsedDates(s => ({ ...s, [date]: !isCollapsed }))}
+                            aria-expanded={!isCollapsed}
+                            style={{
+                              cursor: 'pointer',
+                              border: 'none',
+                              background: 'transparent',
+                              padding: 6,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              borderRadius: 6,
+                            }}
+                            aria-label={isCollapsed ? `Expand ${date}` : `Collapse ${date}`}
+                          >
+                            <svg
+                              width="16"
+                              height="16"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                              style={{
+                                transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
+                                transition: 'transform 160ms ease',
+                                display: 'block',
+                                color: '#444'
+                              }}
+                              aria-hidden
+                            >
+                              <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="currentColor" />
+                            </svg>
+                          </button>
+                          <strong>{date}</strong>
+                          <span style={{ color: '#666' }}>— {group.length} entries</span>
+                        </div>
+                        <div style={{ color: '#666' }}>{date === todayStr ? 'Today' : ''}</div>
+                      </div>
+
+                      {!isCollapsed && (
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>MACHINE</th>
+                              <th>HOUR</th>
+                              <th>ACTIVITY</th>
+                              <th>LOADS</th>
+                              <th>DIST (m)</th>
+                              <th>STATUS</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.map(entry => (
+                              <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
+                                <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
+                                <td>{entry.hour}:00</td>
+                                <td>{entry.activity}</td>
+                                <td>{entry.number_of_loads || '-'}</td>
+                                <td>{entry.haul_distance || '-'}</td>
+                                <td>
+                                  <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()
         )}
       </section>
         {viewEntry && (
