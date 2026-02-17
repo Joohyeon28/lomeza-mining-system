@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useDb } from '../hooks/useDb'
 import { getClientForSchema } from '../lib/supabaseClient'
@@ -14,6 +14,7 @@ interface ProductionEntry {
   number_of_loads: number
   haul_distance: number
   status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  material_type?: string | null
   assets: { asset_code: string }[] | null  // joined from foreign key
 }
 
@@ -137,99 +138,114 @@ export default function ControllerDashboard() {
   useEffect(() => {
     if (!user || !site) return
 
-    const fetchEntries = async () => {
-      const today = new Date().toISOString().split('T')[0]
-      let db
+    // fetchEntries moved to top-level useCallback (see below)
+    fetchEntries()
+
+    const onEntryUpdated = (ev: Event) => {
       try {
-        db = getDb() // get Supabase client with site schema
-      } catch (err: unknown) {
-        console.error('Unable to get DB client:', err)
-        setLoading(false)
-        return
+        fetchEntries()
+      } catch (e) {
+        // ignore
       }
-
-      // Fetch recent production entries for this user (include past shifts)
-      const { data, error } = await db
-        .from('production_entries')
-        .select(`
-          id,
-          machine_id,
-          shift_date,
-          hour,
-          activity,
-          number_of_loads,
-          haul_distance,
-          status,
-          assets ( asset_code )
-        `)
-        .eq('submitted_by', user.id)
-        .order('shift_date', { ascending: false })
-        .order('hour', { ascending: true })
-        .limit(1000)
-
-      if (error) {
-        console.error(error)
-        setLoading(false)
-        return
-      }
-
-        if (data) {
-        // Cast data to ProductionEntry[] to avoid implicit any in filters
-        const typedData = data as ProductionEntry[]
-
-        // If embedded `assets` is missing, try to resolve asset_code from candidate schemas
-        const missingIds = Array.from(new Set(
-          typedData.filter(e => !(e.assets && e.assets.length)).map(e => e.machine_id).filter(Boolean)
-        ))
-
-        let filled = typedData
-        if (missingIds.length > 0) {
-          const selectedSite = site?.toLowerCase() || ''
-          const candidateSchemas = Array.from(new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean))) as string[]
-          const assetsById: Record<string, any> = {}
-
-          for (const schema of candidateSchemas) {
-            if (Object.keys(assetsById).length === missingIds.length) break
-            try {
-              const client = getClientForSchema(schema)
-              const { data: assets } = await client
-                .from('assets')
-                .select('id, asset_code')
-                .in('id', missingIds)
-
-              if (assets && (assets as any[]).length > 0) {
-                for (const a of assets as any[]) assetsById[String(a.id)] = a
-              }
-            } catch (e) {
-              // ignore schema errors and continue
-            }
-          }
-
-          filled = typedData.map(entry => ({
-            ...entry,
-            assets: entry.assets && entry.assets.length ? entry.assets : (assetsById[String(entry.machine_id)] ? [assetsById[String(entry.machine_id)]] : null),
-          }))
-        }
-
-        setEntries(filled)
-        setStats({
-          total: filled.length,
-          approved: filled.filter(e => e.status === 'APPROVED').length,
-          pending: filled.filter(e => e.status === 'PENDING').length,
-          rejected: filled.filter(e => e.status === 'REJECTED').length,
-        })
-
-        // Initialize collapsed state: expand today's group, collapse others
-        const dates = Array.from(new Set(filled.map(e => e.shift_date))).sort((a, b) => b.localeCompare(a))
-        const initCollapsed: Record<string, boolean> = {}
-        for (const d of dates) initCollapsed[d] = d !== localToday
-        setCollapsedDates(initCollapsed)
-      }
-      setLoading(false)
     }
 
-    fetchEntries()
+    window.addEventListener('entry-updated', onEntryUpdated as EventListener)
+    return () => window.removeEventListener('entry-updated', onEntryUpdated as EventListener)
   }, [user, site, getDb])
+
+  // Top-level fetch function so UI can call Refresh and other effects can reuse it
+  const fetchEntries = useCallback(async () => {
+    if (!user || !site) return
+    setLoading(true)
+    let db
+    try {
+      db = getDb() // get Supabase client with site schema
+    } catch (err: unknown) {
+      console.error('Unable to get DB client:', err)
+      setLoading(false)
+      return
+    }
+
+    // Fetch recent production entries for this user (include past shifts)
+    const { data, error } = await db
+      .from('production_entries')
+      .select(`
+        id,
+        machine_id,
+        shift_date,
+        hour,
+        activity,
+        number_of_loads,
+        haul_distance,
+        status,
+        material_type,
+        assets ( asset_code )
+      `)
+      .eq('submitted_by', user.id)
+      .order('shift_date', { ascending: false })
+      .order('hour', { ascending: true })
+      .limit(1000)
+
+    if (error) {
+      console.error(error)
+      setLoading(false)
+      return
+    }
+
+    if (data) {
+      // Cast data to ProductionEntry[] to avoid implicit any in filters
+      const typedData = data as ProductionEntry[]
+
+      // If embedded `assets` is missing, try to resolve asset_code from candidate schemas
+      const missingIds = Array.from(new Set(
+        typedData.filter(e => !(e.assets && e.assets.length)).map(e => e.machine_id).filter(Boolean)
+      ))
+
+      let filled = typedData
+      if (missingIds.length > 0) {
+        const selectedSite = site?.toLowerCase() || ''
+        const candidateSchemas = Array.from(new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean))) as string[]
+        const assetsById: Record<string, any> = {}
+
+        for (const schema of candidateSchemas) {
+          if (Object.keys(assetsById).length === missingIds.length) break
+          try {
+            const client = getClientForSchema(schema)
+            const { data: assets } = await client
+              .from('assets')
+              .select('id, asset_code')
+              .in('id', missingIds)
+
+            if (assets && (assets as any[]).length > 0) {
+              for (const a of assets as any[]) assetsById[String(a.id)] = a
+            }
+          } catch (e) {
+            // ignore schema errors and continue
+          }
+        }
+
+        filled = typedData.map(entry => ({
+          ...entry,
+          assets: entry.assets && entry.assets.length ? entry.assets : (assetsById[String(entry.machine_id)] ? [assetsById[String(entry.machine_id)]] : null),
+        }))
+      }
+
+      setEntries(filled)
+      setStats({
+        total: filled.length,
+        approved: filled.filter(e => e.status === 'APPROVED').length,
+        pending: filled.filter(e => e.status === 'PENDING').length,
+        rejected: filled.filter(e => e.status === 'REJECTED').length,
+      })
+
+      // Initialize collapsed state: expand today's group, collapse others
+      const dates = Array.from(new Set(filled.map(e => e.shift_date))).sort((a, b) => b.localeCompare(a))
+      const initCollapsed: Record<string, boolean> = {}
+      for (const d of dates) initCollapsed[d] = d !== localToday
+      setCollapsedDates(initCollapsed)
+    }
+    setLoading(false)
+  }, [getDb, user, site, localToday])
 
   useEffect(() => {
     if (!entries || entries.length === 0) return
@@ -355,6 +371,15 @@ export default function ControllerDashboard() {
 
   const filteredEntries = entries.filter(isInTimeframe)
 
+  const materialDisplay = (mt?: string | null) => {
+    if (!mt) return '-'
+    const key = String(mt).toLowerCase()
+    if (key.includes('rehab') || key.includes('rehabilitation')) return 'OB (Rehabilitation)'
+    if (key.includes('min') || key.includes('mining')) return 'OB (Mining)'
+    if (key.includes('coal')) return 'Coal'
+    return mt
+  }
+
   return (
     <Layout activePage="/controller-dashboard">
       <div className="dashboard-header">
@@ -377,10 +402,10 @@ export default function ControllerDashboard() {
         {timeframe === 'shift' && (
           <>
             <select value={shiftMode} onChange={e => setShiftMode(e.target.value as any)} style={{ padding: '6px 8px', borderRadius: 6 }}>
-              <option value="current">Current Shift</option>
+              {selectedDate === localToday && <option value="current">Current Shift</option>}
               <option value="full">Full Day</option>
-              <option value="shiftA">Shift A (06:00–17:59)</option>
-              <option value="shiftB">Shift B (18:00–05:59)</option>
+              <option value="shiftA">Day Shift (06:00–17:59)</option>
+              <option value="shiftB">Night Shift (18:00–05:59)</option>
             </select>
             <input
               type="date"
@@ -435,7 +460,12 @@ export default function ControllerDashboard() {
 
       {/* PRODUCTION HISTORY TABLE */}
       <section className="performance">
-        <h2>Production History</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2>Production History</h2>
+          <div>
+            <button onClick={() => fetchEntries()} style={{ marginLeft: 8, padding: '6px 10px', borderRadius: 6, cursor: 'pointer' }} aria-label="Refresh production history">Refresh</button>
+          </div>
+        </div>
         {loading ? (
           <p>Loading...</p>
         ) : filteredEntries.length === 0 ? (
@@ -501,6 +531,7 @@ export default function ControllerDashboard() {
                           <thead>
                             <tr>
                               <th>MACHINE</th>
+                              <th>MATERIAL</th>
                               <th>HOUR</th>
                               <th>ACTIVITY</th>
                               <th>LOADS</th>
@@ -512,6 +543,7 @@ export default function ControllerDashboard() {
                             {group.map(entry => (
                               <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
                                 <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
+                                <td>{materialDisplay(entry.material_type)}</td>
                                 <td>{entry.hour}:00</td>
                                 <td>{entry.activity}</td>
                                 <td>{entry.number_of_loads || '-'}</td>

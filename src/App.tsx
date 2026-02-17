@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useAuth } from './contexts/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Login from './pages/Login'
 
@@ -6,8 +7,10 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import LiveSite from './pages/LiveSite'
 import SupervisorReview from './pages/SupervisorReview'
+import SupervisorDashboard from './pages/SupervisorDashboard'
+import SupervisorLiveSite from './pages/SupervisorLiveSite'
 import Workshop from './pages/Workshop'
-import WorkshopAssets from './pages/WorkshopsAssets'
+import WorkshopAssets from './pages/WorkshopAssets'
 import Exceptions from './pages/Exceptions'
 
 // Controller pages
@@ -16,6 +19,16 @@ import ProductionInput from './pages/ProductionInput'
 import HourlyLogging from './pages/HourlyLogging'
 
 function App() {
+  function RoleRedirect() {
+    const { user, role, loading } = useAuth()
+    if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>
+    if (!user) return <Navigate to="/login" replace />
+    const r = role ? role.toLowerCase() : ''
+    if (r === 'admin') return <Navigate to="/dashboard" replace />
+    if (r === 'supervisor') return <Navigate to="/supervisor-dashboard" replace />
+    if (r === 'controller') return <Navigate to="/controller-dashboard" replace />
+    return <Navigate to="/login" replace />
+  }
   return (
     <BrowserRouter>
       <Routes>
@@ -43,6 +56,22 @@ function App() {
           element={
             <ProtectedRoute>
               <SupervisorReview />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/supervisor-live-site"
+          element={
+            <ProtectedRoute>
+              <SupervisorLiveSite />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/supervisor-dashboard"
+          element={
+            <ProtectedRoute>
+              <SupervisorDashboard />
             </ProtectedRoute>
           }
         />
@@ -97,8 +126,8 @@ function App() {
           }
         />
 
-        {/* Default redirect – will be handled by ProtectedRoute based on role */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        {/* Default redirect – route by role */}
+        <Route path="/" element={<RoleRedirect />} />
       </Routes>
     </BrowserRouter>
   )

@@ -412,7 +412,7 @@ export default function ProductionInput() {
       // Try to find an existing plan to avoid unique constraint errors
       let plan: any = null
       try {
-        const { data: existing, error: existingError } = await db
+        const { data: existing } = await db
           .from('daily_plans')
           .select('*')
           .eq('site', site)
@@ -1038,7 +1038,7 @@ function SummaryStep({
   }
 
   return (
-    <section id="production-summary">
+    <section id="production-summary" data-active-plan-id={activePlanId || undefined}>
       <h2>Production Summary</h2>
 
       <div style={{ marginBottom: 12, color: '#374151' }}>

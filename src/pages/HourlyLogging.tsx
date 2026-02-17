@@ -5,8 +5,6 @@ import { useDb } from '../hooks/useDb'
 import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
 import LogDetailModal from '../components/LogDetailModal'
-import { getShiftKindForTime, getDayGroup } from '../lib/shifts'
-import { getShiftAnchor } from '../lib/settings'
 import type { Group } from '../lib/shifts'
 
 interface Machine {
@@ -119,7 +117,7 @@ export default function HourlyLogging() {
               if (ids.length === Object.keys(assetsById).length) break
               try {
                 const client = getClientForSchema(schema)
-                const { data: assets, error: assetsError } = await client
+                const { data: assets } = await client
                   .from('assets')
                   .select('id, asset_code, asset_type, machine_role')
                   .in('id', ids)
@@ -170,15 +168,7 @@ export default function HourlyLogging() {
     return () => clearInterval(t)
   }, [])
 
-  const shiftKind = getShiftKindForTime(now)
   const currentHour = now.getHours()
-  let currentGroup: Group | null = null
-  try {
-    const anchor = getShiftAnchor() || { anchorDate: new Date(), anchorGroup: 'A' as Group }
-    currentGroup = getDayGroup(now, anchor.anchorDate, anchor.anchorGroup)
-  } catch (e) {
-    currentGroup = null
-  }
 
   // prefer group/shift passed via navigation state (from ProductionInput)
   // Show selected group/shift only when provided via navigation state or
@@ -267,12 +257,7 @@ export default function HourlyLogging() {
     )
   }
 
-  const getHourState = (machineId: string, hour: number) => {
-    const entry = loggedHours.find(
-      l => l.machine_id === machineId && l.hour === hour
-    )
-    return entry?.activity || 'none'
-  }
+  
 
   const handleHourClick = (machine: Machine, hour: number) => {
     // eslint-disable-next-line no-console
@@ -433,6 +418,7 @@ export default function HourlyLogging() {
       shift_date: new Date().toISOString().split('T')[0],
       hour: selectedHour,
       machine_id: selectedMachine.id,
+      material_type: selectedMachine.material_type ?? null,
       activity,
       number_of_loads: activity === 'Production' ? loads : null,
       haul_distance: selectedMachine.haul_distance ?? null,
@@ -443,7 +429,7 @@ export default function HourlyLogging() {
     const db = getDb()
     try {
       // Use upsert to avoid duplicate-key errors and allow updating existing hour entries
-      const { data, error } = await db
+      const { error } = await db
         .from('production_entries')
         .upsert([newEntry], { onConflict: 'machine_id,shift_date,hour' })
 
@@ -625,7 +611,6 @@ export default function HourlyLogging() {
                                 {Array.from({ length: 12 }, (_, i) => i + 6).map(hour => {
                                   const entry = loggedHours.find(l => l.machine_id === machine.id && l.hour === hour)
                                   const state = entry?.activity || 'none'
-                                  const loadsBadge = entry?.number_of_loads ?? null
                                   return (
                                     <button
                                       key={hour}

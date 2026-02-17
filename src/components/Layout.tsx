@@ -15,9 +15,10 @@ export default function Layout({ children, activePage }: LayoutProps) {
   const navLinks = (() => {
     const normalized = role ? role.toLowerCase() : ''
     if (normalized === 'admin' || normalized === 'supervisor') {
+      const livePath = normalized === 'supervisor' ? '/supervisor-live-site' : '/live-site'
       return [
         { path: '/dashboard', label: 'Dashboard' },
-        { path: '/live-site', label: 'Live Site' },
+        { path: livePath, label: 'Live Site' },
         { path: '/supervisor-review', label: 'Supervisor Review' },
         { path: '/workshop', label: 'Workshop' },
         { path: '/exceptions', label: 'Exceptions' }
