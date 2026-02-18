@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useDb } from '../hooks/useDb'
 import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
@@ -36,46 +36,28 @@ export default function Exceptions() {
 
       if (exError) throw exError
 
-      // fetch breakdown records; some schemas may not have optional columns,
-      // so try a rich select first and fall back to a minimal safe select on error
+      // fetch breakdown records. Try to include `operator` where available,
+      // but fall back to a minimal select if the column isn't exposed in this schema.
       let bdData = null
       try {
-        const res = await getDb()
+        // first attempt: include operator
+        let res = await getDb()
           .from('breakdowns')
-          .select(`
-            id,
-            reason,
-            status,
-            site,
-            breakdown_start,
-            reported_by,
-            other_reason,
-            description,
-            details,
-            additional_info,
-            please_describe,
-            notes,
-            assets ( asset_code )
-          `)
+          .select(`id,reason,status,site,breakdown_start,reported_by,operator,assets ( asset_code )`)
           .order('breakdown_start', { ascending: false })
         bdData = res.data
-        if (res.error) throw res.error
-      } catch (bdErr: any) {
-        // If PostgREST complains about unknown columns (42703), retry with safe minimal select
-        if (bdErr && (bdErr.code === '42703' || String(bdErr.message).includes('does not exist'))) {
-          try {
-            const res2 = await getDb()
-              .from('breakdowns')
-              .select(`id,reason,status,site,breakdown_start,reported_by,assets ( asset_code )`)
-              .order('breakdown_start', { ascending: false })
-            bdData = res2.data
-            if (res2.error) throw res2.error
-          } catch (fallbackErr) {
-            throw fallbackErr
-          }
-        } else {
-          throw bdErr
+        if (res.error) {
+          // fallback: try without operator to avoid schema-specific column errors
+          const res2 = await getDb()
+            .from('breakdowns')
+            .select(`id,reason,status,site,breakdown_start,reported_by,assets ( asset_code )`)
+            .order('breakdown_start', { ascending: false })
+          bdData = res2.data
+          if (res2.error) throw res2.error
         }
+      } catch (bdErr: any) {
+        // surface the error to the outer handler
+        throw bdErr
       }
 
       const formattedExceptions = (exData ?? []).map((item: any) => ({
@@ -165,6 +147,12 @@ export default function Exceptions() {
       if (error) throw error
 
       await fetchExceptions()
+      // notify other views to refresh (e.g., dashboards)
+      try {
+        window.dispatchEvent(new CustomEvent('entry-updated', { detail: { id, source } }))
+      } catch (e) {
+        // ignore dispatch errors
+      }
     } catch (err) {
       console.error('Error updating exception:', err)
     }
@@ -215,8 +203,8 @@ export default function Exceptions() {
               </thead>
               <tbody>
                 {exceptions.map((exc: any) => (
-                  <>
-                    <tr key={`${exc.source || 'exception'}-${exc.id}`} onClick={() => setExpandedId(prev => prev === `${exc.source || 'exception'}-${exc.id}` ? null : `${exc.source || 'exception'}-${exc.id}`)} style={{ cursor: 'pointer' }}>
+                  <React.Fragment key={`${exc.source || 'exception'}-${exc.id}`}>
+                    <tr onClick={() => setExpandedId(prev => prev === `${exc.source || 'exception'}-${exc.id}` ? null : `${exc.source || 'exception'}-${exc.id}`)} style={{ cursor: 'pointer' }}>
                       <td className="machine-id">{exc.asset_code}</td>
                       <td>{exc.site}</td>
                       <td>{exc.reason}</td>
@@ -238,11 +226,14 @@ export default function Exceptions() {
                       </td>
                     </tr>
                     {expandedId === `${exc.source || 'exception'}-${exc.id}` && (
-                      <tr key={`details-${exc.source || 'exception'}-${exc.id}`}>
+                      <tr>
                         <td colSpan={6} style={{ background: '#fafafa', padding: 12 }}>
                           <div style={{ display: 'grid', gap: 8 }}>
                             <div><strong>Reason:</strong> {exc.reason}</div>
                             {exc.source === 'breakdown' && exc.reported_by_display && <div><strong>Reported by:</strong> {exc.reported_by_display}</div>}
+                            {exc.source === 'breakdown' && exc.operator && (
+                              <div><strong>Name of Operator:</strong> {exc.operator}</div>
+                            )}
                             <div><strong>Status:</strong> {exc.status}</div>
                             <div><strong>Date:</strong> {new Date(exc.created_at).toLocaleDateString()}</div>
                             {exc.source === 'breakdown' ? (
@@ -252,7 +243,7 @@ export default function Exceptions() {
                             )}
                             {/* Render any additional breakdown fields if present */}
                             {Object.entries(exc)
-                              .filter(([k]) => !['id','asset_code','reason','status','site','created_at','source','reported_by','reported_by_display','assets','breakdown_start'].includes(k))
+                              .filter(([k]) => !['id','asset_code','reason','status','site','created_at','source','reported_by','reported_by_display','assets','breakdown_start','operator'].includes(k))
                               .map(([k, v]) => v ? (
                                 <div key={k}><strong>{k.replace(/_/g, ' ')}:</strong> {String(v)}</div>
                               ) : null)}
@@ -260,7 +251,7 @@ export default function Exceptions() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

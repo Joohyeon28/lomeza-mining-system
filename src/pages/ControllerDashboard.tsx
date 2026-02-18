@@ -13,8 +13,9 @@ interface ProductionEntry {
   activity: string
   number_of_loads: number
   haul_distance: number
-  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ACKNOWLEDGED' | 'EXCEPTION'
   material_type?: string | null
+  rejection_reason?: string | null
   assets: { asset_code: string }[] | null  // joined from foreign key
 }
 
@@ -28,6 +29,7 @@ interface Stats {
 export default function ControllerDashboard() {
   const { user, site } = useAuth()
   const getDb = useDb()
+  const STORAGE_KEY = 'controller:pageState'
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [stats, setStats] = useState<Stats>({
     total: 0,
@@ -35,10 +37,15 @@ export default function ControllerDashboard() {
     pending: 0,
     rejected: 0,
   })
+  const [rejectedModalOpen, setRejectedModalOpen] = useState(false)
+  const [rejectedEntriesList, setRejectedEntriesList] = useState<ProductionEntry[]>([])
+  const [loadingRejected, setLoadingRejected] = useState(false)
   const [loading, setLoading] = useState(true)
   const [viewEntry, setViewEntry] = useState<any | null>(null)
   const [viewBreakdown, setViewBreakdown] = useState<any | null>(null)
   const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({})
+  const [collapsedMaterials, setCollapsedMaterials] = useState<Record<string, boolean>>({})
+  const materialCategories = ['OB (Mining)', 'OB (Rehabilitation)', 'Coal']
   const [timeframe, setTimeframe] = useState<'shift' | 'week' | 'month' | 'all'>('shift')
   const [shiftMode, setShiftMode] = useState<'full' | 'shiftA' | 'shiftB' | 'current'>('current')
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -62,6 +69,44 @@ export default function ControllerDashboard() {
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
   })
+
+  // Restore persisted page state (filters + collapsed groups)
+  // Runs once on mount in the browser.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (parsed.timeframe) setTimeframe(parsed.timeframe)
+      if (parsed.shiftMode) setShiftMode(parsed.shiftMode)
+      if (parsed.selectedDate) setSelectedDate(parsed.selectedDate)
+      if (parsed.selectedWeek) setSelectedWeek(parsed.selectedWeek)
+      if (parsed.selectedMonth) setSelectedMonth(parsed.selectedMonth)
+      if (parsed.collapsedDates) setCollapsedDates(parsed.collapsedDates)
+      if (parsed.collapsedMaterials) setCollapsedMaterials(parsed.collapsedMaterials)
+    } catch (e) {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Persist page state whenever relevant pieces change
+  useEffect(() => {
+    try {
+      const toSave = {
+        timeframe,
+        shiftMode,
+        selectedDate,
+        selectedWeek,
+        selectedMonth,
+        collapsedDates,
+        collapsedMaterials,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+    } catch (e) {
+      // ignore
+    }
+  }, [timeframe, shiftMode, selectedDate, selectedWeek, selectedMonth, collapsedDates, collapsedMaterials])
 
   const getISOWeek = (dt: Date) => {
     const tmp = new Date(dt.getTime())
@@ -137,20 +182,13 @@ export default function ControllerDashboard() {
 
   useEffect(() => {
     if (!user || !site) return
-
-    // fetchEntries moved to top-level useCallback (see below)
+    // Initial load and refresh when entries are updated elsewhere
     fetchEntries()
-
-    const onEntryUpdated = (ev: Event) => {
-      try {
-        fetchEntries()
-      } catch (e) {
-        // ignore
-      }
+    const handler = (ev: Event) => {
+      try { fetchEntries() } catch (e) { /* ignore */ }
     }
-
-    window.addEventListener('entry-updated', onEntryUpdated as EventListener)
-    return () => window.removeEventListener('entry-updated', onEntryUpdated as EventListener)
+    window.addEventListener('entry-updated', handler as EventListener)
+    return () => window.removeEventListener('entry-updated', handler as EventListener)
   }, [user, site, getDb])
 
   // Top-level fetch function so UI can call Refresh and other effects can reuse it
@@ -179,6 +217,7 @@ export default function ControllerDashboard() {
         haul_distance,
         status,
         material_type,
+        rejection_reason,
         assets ( asset_code )
       `)
       .eq('submitted_by', user.id)
@@ -230,6 +269,53 @@ export default function ControllerDashboard() {
         }))
       }
 
+      // Normalize: show breakdown rows as EXCEPTION in the production history
+      filled = (filled || []).map((en) => ({ ...en, status: en.activity === 'Breakdown' ? 'EXCEPTION' : en.status }))
+
+      // If any entries are Breakdowns, check the `breakdowns` table for acknowledged status
+      try {
+        const bdCandidates = filled.filter(e => String(e.activity).toLowerCase() === 'breakdown')
+        if (bdCandidates.length > 0) {
+          const machineIds = Array.from(new Set(bdCandidates.map(e => String(e.machine_id)).filter(Boolean)))
+          const dates = Array.from(new Set(bdCandidates.map(e => e.shift_date))).filter(Boolean)
+          if (machineIds.length > 0 && dates.length > 0) {
+            const starts = dates.map(d => new Date(d + 'T00:00:00').toISOString())
+            const ends = dates.map(d => new Date(d + 'T23:59:59.999').toISOString())
+            const earliest = starts.reduce((a, b) => a < b ? a : b, starts[0])
+            const latest = ends.reduce((a, b) => a > b ? a : b, ends[0])
+
+            const { data: bds, error: bdErr } = await db
+              .from('breakdowns')
+              .select('id,asset_id,breakdown_start,status')
+              .in('asset_id', machineIds)
+              .gte('breakdown_start', earliest)
+              .lte('breakdown_start', latest)
+
+            if (!bdErr && bds) {
+              const bdMap: Record<string, any[]> = {}
+              ;(bds as any[]).forEach((r: any) => {
+                const dateKey = String(r.breakdown_start || '').split('T')[0]
+                const key = `${r.asset_id}|${dateKey}`
+                bdMap[key] = bdMap[key] || []
+                bdMap[key].push(r)
+              })
+
+              filled = filled.map(ent => {
+                if (String(ent.activity).toLowerCase() !== 'breakdown') return ent
+                const key = `${ent.machine_id}|${ent.shift_date}`
+                const matches = bdMap[key]
+                if (matches && matches.some((m: any) => String(m.status).toUpperCase() === 'ACKNOWLEDGED')) {
+                  return { ...ent, status: 'ACKNOWLEDGED' }
+                }
+                return ent
+              })
+            }
+          }
+        }
+      } catch (e) {
+        // ignore breakdown lookup errors
+      }
+
       setEntries(filled)
       setStats({
         total: filled.length,
@@ -243,6 +329,13 @@ export default function ControllerDashboard() {
       const initCollapsed: Record<string, boolean> = {}
       for (const d of dates) initCollapsed[d] = d !== localToday
       setCollapsedDates(initCollapsed)
+      // initialize per-date material collapse state (default: expanded)
+      const initMat: Record<string, boolean> = {}
+      for (const d of dates) {
+        for (const c of materialCategories) initMat[`${d}|${c}`] = false
+        initMat[`${d}|Other`] = false
+      }
+      setCollapsedMaterials(initMat)
     }
     setLoading(false)
   }, [getDb, user, site, localToday])
@@ -374,6 +467,7 @@ export default function ControllerDashboard() {
   const materialDisplay = (mt?: string | null) => {
     if (!mt) return '-'
     const key = String(mt).toLowerCase()
+    if (key === 'ob') return 'OB (Mining)'
     if (key.includes('rehab') || key.includes('rehabilitation')) return 'OB (Rehabilitation)'
     if (key.includes('min') || key.includes('mining')) return 'OB (Mining)'
     if (key.includes('coal')) return 'Coal'
@@ -453,8 +547,51 @@ export default function ControllerDashboard() {
         </div>
         <div className="metric-card">
           <div className="metric-title">REJECTED</div>
-          <div className="metric-value">{stats.rejected}</div>
-          <div className="metric-sub">Rejected entries</div>
+            <div className="metric-value">{stats.rejected}</div>
+            <div className="metric-sub" style={{ cursor: 'pointer' }} onClick={() => {
+              (async () => {
+                // load rejected entries for current user and open modal
+                if (!user) return
+                setLoading(true)
+                setRejectedModalOpen(true)
+                try {
+                  setLoadingRejected(true)
+                  const db = getDb()
+                  const { data: rdata, error: rerr } = await db
+                    .from('production_entries')
+                    .select(`
+                      id,
+                      machine_id,
+                      shift_date,
+                      hour,
+                      activity,
+                      number_of_loads,
+                      haul_distance,
+                      status,
+                      material_type,
+                      rejection_reason,
+                      assets ( asset_code )
+                    `)
+                    .eq('submitted_by', user.id)
+                    .eq('status', 'REJECTED')
+                    .order('shift_date', { ascending: false })
+                    .order('hour', { ascending: true })
+
+                  if (rerr) {
+                    console.error('Failed to load rejected entries', rerr)
+                    setRejectedEntriesList([])
+                  } else {
+                    setRejectedEntriesList((rdata ?? []) as ProductionEntry[])
+                  }
+                } catch (e) {
+                  console.error('Failed to load rejected entries', e)
+                  setRejectedEntriesList([])
+                } finally {
+                  setLoadingRejected(false)
+                  setLoading(false)
+                }
+              })()
+            }}>Rejected entries</div>
         </div>
       </section>
 
@@ -489,17 +626,20 @@ export default function ControllerDashboard() {
                       <div className="group-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                           <button
+                            type="button"
                             onClick={() => setCollapsedDates(s => ({ ...s, [date]: !isCollapsed }))}
                             aria-expanded={!isCollapsed}
+                            title={isCollapsed ? `Expand ${date}` : `Collapse ${date}`}
                             style={{
                               cursor: 'pointer',
                               border: 'none',
                               background: 'transparent',
-                              padding: 6,
+                              padding: 8,
                               display: 'inline-flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              borderRadius: 6,
+                              borderRadius: 8,
+                              minWidth: 36,
                             }}
                             aria-label={isCollapsed ? `Expand ${date}` : `Collapse ${date}`}
                           >
@@ -519,6 +659,7 @@ export default function ControllerDashboard() {
                             >
                               <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="currentColor" />
                             </svg>
+                            <span style={{position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0}}>{isCollapsed ? `Expand ${date}` : `Collapse ${date}`}</span>
                           </button>
                           <strong>{date}</strong>
                           <span style={{ color: '#666' }}>— {group.length} entries</span>
@@ -527,34 +668,124 @@ export default function ControllerDashboard() {
                       </div>
 
                       {!isCollapsed && (
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>MACHINE</th>
-                              <th>MATERIAL</th>
-                              <th>HOUR</th>
-                              <th>ACTIVITY</th>
-                              <th>LOADS</th>
-                              <th>DIST (m)</th>
-                              <th>STATUS</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {group.map(entry => (
-                              <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
-                                <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
-                                <td>{materialDisplay(entry.material_type)}</td>
-                                <td>{entry.hour}:00</td>
-                                <td>{entry.activity}</td>
-                                <td>{entry.number_of_loads || '-'}</td>
-                                <td>{entry.haul_distance || '-'}</td>
-                                <td>
-                                  <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                        <div>
+                          {materialCategories.map(cat => {
+                            const rows = group.filter(e => materialDisplay(e.material_type) === cat)
+                            if (!rows.length) return null
+                            const catKey = `${date}|${cat}`
+                            const isCatCollapsed = !!collapsedMaterials[catKey]
+                            return (
+                              <div key={cat} style={{ marginTop: 12 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCollapsedMaterials(s => ({ ...s, [catKey]: !isCatCollapsed }))}
+                                      aria-expanded={!isCatCollapsed}
+                                      title={isCatCollapsed ? `Expand ${cat}` : `Collapse ${cat}`}
+                                      style={{ cursor: 'pointer', border: 'none', background: 'transparent', padding: 6, borderRadius: 8, minWidth: 36 }}
+                                    >
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ transform: isCatCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 160ms ease', display: 'block', color: '#444' }} aria-hidden>
+                                        <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="currentColor" />
+                                      </svg>
+                                      <span style={{position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0}}>{isCatCollapsed ? `Expand ${cat}` : `Collapse ${cat}`}</span>
+                                    </button>
+                                    <div style={{ fontWeight: 700 }}>{cat}</div>
+                                  </div>
+                                </div>
+                                {!isCatCollapsed && (
+                                  <table>
+                                    <thead>
+                                      <tr>
+                                        <th>MACHINE</th>
+                                        <th>MATERIAL</th>
+                                        <th>HOUR</th>
+                                        <th>ACTIVITY</th>
+                                        <th>LOADS</th>
+                                        <th>DIST (m)</th>
+                                        <th>STATUS</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {rows.map(entry => (
+                                        <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
+                                          <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
+                                          <td>{materialDisplay(entry.material_type)}</td>
+                                          <td>{entry.hour}:00</td>
+                                          <td>{entry.activity}</td>
+                                          <td>{entry.number_of_loads || '-'}</td>
+                                          <td>{entry.haul_distance || '-'}</td>
+                                          <td>
+                                            <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+                            )
+                          })}
+
+                          {(() => {
+                            const categories = materialCategories
+                            const others = group.filter(e => !categories.includes(materialDisplay(e.material_type)))
+                            if (!others.length) return null
+                            const otherKey = `${date}|Other`
+                            const isOtherCollapsed = !!collapsedMaterials[otherKey]
+                            return (
+                              <div style={{ marginTop: 12 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCollapsedMaterials(s => ({ ...s, [otherKey]: !isOtherCollapsed }))}
+                                      aria-expanded={!isOtherCollapsed}
+                                      title={isOtherCollapsed ? 'Expand Other' : 'Collapse Other'}
+                                      style={{ cursor: 'pointer', border: 'none', background: 'transparent', padding: 6, borderRadius: 8, minWidth: 36 }}
+                                    >
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ transform: isOtherCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 160ms ease', display: 'block', color: '#444' }} aria-hidden>
+                                        <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="currentColor" />
+                                      </svg>
+                                      <span style={{position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0}}>{isOtherCollapsed ? 'Expand Other' : 'Collapse Other'}</span>
+                                    </button>
+                                    <div style={{ fontWeight: 700 }}>Other</div>
+                                  </div>
+                                </div>
+                                {!isOtherCollapsed && (
+                                  <table>
+                                    <thead>
+                                      <tr>
+                                        <th>MACHINE</th>
+                                        <th>MATERIAL</th>
+                                        <th>HOUR</th>
+                                        <th>ACTIVITY</th>
+                                        <th>LOADS</th>
+                                        <th>DIST (m)</th>
+                                        <th>STATUS</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {others.map(entry => (
+                                        <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
+                                          <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
+                                          <td>{materialDisplay(entry.material_type)}</td>
+                                          <td>{entry.hour}:00</td>
+                                          <td>{entry.activity}</td>
+                                          <td>{entry.number_of_loads || '-'}</td>
+                                          <td>{entry.haul_distance || '-'}</td>
+                                          <td>
+                                            <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+                            )
+                          })()}
+                        </div>
                       )}
                     </div>
                   )
@@ -573,6 +804,51 @@ export default function ControllerDashboard() {
               setViewBreakdown(null)
             }}
           />
+        )}
+        {rejectedModalOpen && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
+            <div style={{ background: '#fff', borderRadius: 8, maxWidth: 1000, width: '95%', maxHeight: '80%', overflow: 'auto', padding: 16 }} role="dialog" aria-modal="true">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <h3 style={{ margin: 0 }}>Rejected Reviews</h3>
+                <div>
+                  <button onClick={() => { setRejectedModalOpen(false); setRejectedEntriesList([]) }} style={{ marginRight: 8 }}>Close</button>
+                </div>
+              </div>
+
+              {loadingRejected ? (
+                <p>Loading...</p>
+              ) : rejectedEntriesList.length === 0 ? (
+                <p className="empty-state">No rejected reviews.</p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'left', padding: 8 }}>MACHINE</th>
+                      <th style={{ textAlign: 'left', padding: 8 }}>MATERIAL</th>
+                      <th style={{ textAlign: 'left', padding: 8 }}>HOUR</th>
+                      <th style={{ textAlign: 'left', padding: 8 }}>ACTIVITY</th>
+                      <th style={{ textAlign: 'left', padding: 8 }}>LOADS</th>
+                      <th style={{ textAlign: 'left', padding: 8 }}>DIST (m)</th>
+                      <th style={{ textAlign: 'left', padding: 8 }}>REASON</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rejectedEntriesList.map((entry) => (
+                      <tr key={String(entry.id)} onClick={() => { handleRowClick(entry); setRejectedModalOpen(false); }} style={{ cursor: 'pointer' }}>
+                        <td style={{ padding: 8 }}>{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
+                        <td style={{ padding: 8 }}>{materialDisplay(entry.material_type)}</td>
+                        <td style={{ padding: 8 }}>{entry.hour}:00</td>
+                        <td style={{ padding: 8 }}>{entry.activity}</td>
+                        <td style={{ padding: 8 }}>{entry.number_of_loads ?? '-'}</td>
+                        <td style={{ padding: 8 }}>{entry.haul_distance ?? '-'}</td>
+                        <td style={{ padding: 8 }}>{entry.rejection_reason ?? '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
         )}
     </Layout>
   )

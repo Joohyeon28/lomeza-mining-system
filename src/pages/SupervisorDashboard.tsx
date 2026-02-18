@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useDb } from '../hooks/useDb'
 import { getClientForSchema, supabase } from '../lib/supabaseClient'
@@ -25,10 +26,11 @@ interface ProductionEntry {
   shift_date: string
   hour: number
     material_type?: string
+    rejection_reason?: string | null
   activity: string
   number_of_loads: number
   haul_distance: number
-  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXCEPTION'
   assets: { asset_code: string }[] | null
 }
 
@@ -37,6 +39,7 @@ interface ProductionEntry {
 export default function SupervisorDashboard() {
   const { site } = useAuth()
   const getDb = useDb()
+  const navigate = useNavigate()
   const pad = (n: number) => String(n).padStart(2, '0')
   const getISOWeek = (dt: Date) => {
     const tmp = new Date(dt.getTime())
@@ -72,6 +75,8 @@ export default function SupervisorDashboard() {
   const [viewEntry, setViewEntry] = useState<any | null>(null)
   const [viewBreakdown, setViewBreakdown] = useState<any | null>(null)
   const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({})
+  const [collapsedMaterials, setCollapsedMaterials] = useState<Record<string, boolean>>({})
+  const materialCategories = ['OB (Mining)', 'OB (Rehabilitation)', 'Coal']
   const [timeframe, setTimeframe] = useState<'shift' | 'week' | 'month' | 'all'>('shift')
   const [shiftMode, setShiftMode] = useState<'full' | 'shiftA' | 'shiftB' | 'current'>('current')
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -94,6 +99,45 @@ export default function SupervisorDashboard() {
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
   })
+
+  const STORAGE_KEY = 'supervisor:pageState'
+
+  // Restore persisted page state on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (parsed.timeframe) setTimeframe(parsed.timeframe)
+      if (parsed.shiftMode) setShiftMode(parsed.shiftMode)
+      if (parsed.selectedDate) setSelectedDate(parsed.selectedDate)
+      if (parsed.selectedWeek) setSelectedWeek(parsed.selectedWeek)
+      if (parsed.selectedMonth) setSelectedMonth(parsed.selectedMonth)
+      if (parsed.collapsedDates) setCollapsedDates(parsed.collapsedDates)
+      if (parsed.collapsedMaterials) setCollapsedMaterials(parsed.collapsedMaterials)
+    } catch (e) {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Persist page state when filters or collapse state change
+  useEffect(() => {
+    try {
+      const toSave = {
+        timeframe,
+        shiftMode,
+        selectedDate,
+        selectedWeek,
+        selectedMonth,
+        collapsedDates,
+        collapsedMaterials,
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave))
+    } catch (e) {
+      // ignore
+    }
+  }, [timeframe, shiftMode, selectedDate, selectedWeek, selectedMonth, collapsedDates, collapsedMaterials])
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     total_loads: 0,
     total_volume: 0,
@@ -166,7 +210,7 @@ export default function SupervisorDashboard() {
     }
     return true
   }
-  const fetchEntries = async () => {
+  const fetchEntries = useCallback(async () => {
     setLoadingEntries(true)
     try {
       const db = getDb()
@@ -178,6 +222,7 @@ export default function SupervisorDashboard() {
           shift_date,
           hour,
           material_type,
+          rejection_reason,
           activity,
           number_of_loads,
           haul_distance,
@@ -223,127 +268,139 @@ export default function SupervisorDashboard() {
           }))
         }
 
-        setEntries(filled)
+        // Normalize: show breakdown rows as EXCEPTION in the production history
+        let normalized = (filled || []).map((en) => ({ ...en, status: en.activity === 'Breakdown' ? 'EXCEPTION' : en.status }))
+        // If breakdowns exist that have been acknowledged, reflect that here
+        try {
+          const bdCandidates = (filled || []).filter((e: any) => String(e.activity).toLowerCase() === 'breakdown')
+          if (bdCandidates.length > 0) {
+            const machineIds = Array.from(new Set(bdCandidates.map((e: any) => String(e.machine_id)).filter(Boolean)))
+            const dates = Array.from(new Set(bdCandidates.map((e: any) => e.shift_date))).filter(Boolean)
+            if (machineIds.length > 0 && dates.length > 0) {
+              const starts = dates.map((d: string) => new Date(d + 'T00:00:00').toISOString())
+              const ends = dates.map((d: string) => new Date(d + 'T23:59:59.999').toISOString())
+              const earliest = starts.reduce((a, b) => a < b ? a : b, starts[0])
+              const latest = ends.reduce((a, b) => a > b ? a : b, ends[0])
+
+              const { data: bds, error: bdErr } = await db
+                .from('breakdowns')
+                .select('id,asset_id,breakdown_start,status')
+                .in('asset_id', machineIds)
+                .gte('breakdown_start', earliest)
+                .lte('breakdown_start', latest)
+
+              if (!bdErr && bds) {
+                const bdMap: Record<string, any[]> = {}
+                ;(bds as any[]).forEach((r: any) => {
+                  const dateKey = String(r.breakdown_start || '').split('T')[0]
+                  const key = `${r.asset_id}|${dateKey}`
+                  bdMap[key] = bdMap[key] || []
+                  bdMap[key].push(r)
+                })
+
+                normalized = normalized.map((ent: any) => {
+                  if (String(ent.activity).toLowerCase() !== 'breakdown') return ent
+                  const key = `${ent.machine_id}|${ent.shift_date}`
+                  const matches = bdMap[key]
+                  if (matches && matches.some((m: any) => String(m.status).toUpperCase() === 'ACKNOWLEDGED')) {
+                    return { ...ent, status: 'ACKNOWLEDGED' }
+                  }
+                  return ent
+                })
+              }
+            }
+          }
+        } catch (e) {
+          // ignore breakdown lookup errors
+        }
+
+        setEntries(normalized)
+
+        // Recompute active exceptions so the card reflects current data immediately
+        try {
+          const { count: exceptions, error: exceptionsError } = await getDb()
+            .from('exceptions')
+            .select('*', { count: 'exact', head: true })
+            .in('status', ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'])
+
+          const { count: breakdownEntriesCount, error: breakdownError } = await getDb()
+            .from('production_entries')
+            .select('*', { count: 'exact', head: true })
+            .eq('activity', 'Breakdown')
+
+          const activeExceptionsTotal = (exceptions || 0) + (breakdownEntriesCount || 0)
+          if (!exceptionsError && !breakdownError) {
+            setMetrics(m => ({ ...m, active_exceptions: activeExceptionsTotal || 0 }))
+          }
+        } catch (err) {
+          console.error('Error updating active exceptions:', err)
+        }
 
         const dates = Array.from(new Set(filled.map(e => e.shift_date))).sort((a, b) => b.localeCompare(a))
         const initCollapsed: Record<string, boolean> = {}
         for (const d of dates) initCollapsed[d] = d !== localToday
         setCollapsedDates(initCollapsed)
+        // initialize per-date material collapse state (default: expanded)
+        const initMat: Record<string, boolean> = {}
+        for (const d of dates) {
+          for (const c of materialCategories) initMat[`${d}|${c}`] = false
+          initMat[`${d}|Other`] = false
+        }
+        setCollapsedMaterials(initMat)
       }
     } catch (err) {
       console.error('Error loading supervisor entries:', err)
     } finally {
       setLoadingEntries(false)
     }
-  }
+  }, [getDb, site, localToday])
 
   useEffect(() => {
     if (!site) return
+    // Initial load
     fetchEntries()
+    return
+  }, [site, getDb, fetchEntries])
 
-    // Realtime: subscribe to production_entries changes so controller actions
-    // appear in the supervisor view without a reload.
-    let realtimeSub: any = null
-    try {
-      const realtimeClient = supabase
-      realtimeSub = realtimeClient
-        .channel('public:production_entries')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'production_entries' }, (payload: any) => {
-          if (payload.new?.site === site) {
-            fetchEntries()
-            window.dispatchEvent(new CustomEvent('entry-updated', { detail: { id: payload.new.id, status: payload.new.status } }))
-          }
-        })
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'production_entries' }, (payload: any) => {
-          if (payload.new?.site === site) {
-            fetchEntries()
-            window.dispatchEvent(new CustomEvent('entry-updated', { detail: { id: payload.new.id, status: payload.new.status } }))
-          }
-        })
-        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'production_entries' }, (payload: any) => {
-          if (payload.old?.site === site) {
-            fetchEntries()
-            window.dispatchEvent(new CustomEvent('entry-updated', { detail: { id: payload.old.id, status: 'DELETED' } }))
-          }
-        })
-        .subscribe()
-    } catch (e) {
-      // If realtime isn't available or subscription fails, ignore and fall back to manual refresh
-    }
-
-    const onEntryUpdated = (ev: Event) => {
+  // Refresh the list when an entry is updated elsewhere in the app
+  useEffect(() => {
+    const handler = (ev: Event) => {
       try {
-        // refresh metrics and entries when a supervisor action updates an entry
-        fetchEntries()
-        // also refresh metrics
-        ;(async () => {
-          try {
-            const { data: approvedData, error: approvedError } = await getDb()
-              .from('production_entries')
-              .select('number_of_loads, haul_distance')
-              .eq('status', 'APPROVED')
-
-            if (!approvedError) {
-              const approved = (approvedData ?? []) as any[]
-              const total_loads = approved.reduce((sum: number, entry: any) => sum + (entry.number_of_loads || 0), 0)
-              const total_volume = approved.reduce((sum: number, entry: any) => sum + (entry.number_of_loads || 0) * (entry.haul_distance || 0), 0)
-              setMetrics(m => ({ ...m, total_loads, total_volume }))
-            }
-            const { count: pending } = await getDb()
-              .from('production_entries')
-              .select('*', { count: 'exact', head: true })
-              .eq('status', 'PENDING')
-              .neq('activity', 'Breakdown')
-            const { count: breakdownEntriesCount } = await getDb()
-              .from('production_entries')
-              .select('*', { count: 'exact', head: true })
-              .eq('activity', 'Breakdown')
-            const { count: exceptions } = await getDb()
-              .from('exceptions')
-              .select('*', { count: 'exact', head: true })
-              .in('status', ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'])
-            setMetrics(m => ({ ...m, pending_reviews: pending || 0, active_exceptions: ((exceptions || 0) + (breakdownEntriesCount || 0)) }))
-            // If the event included an entry id, expand its date group so it becomes visible
-            try {
-              const detail = (ev as any)?.detail
-              const updatedId = detail?.id
-              if (updatedId) {
-                const { data: row } = await getDb()
-                  .from('production_entries')
-                  .select('shift_date')
-                  .eq('id', updatedId)
-                  .limit(1)
-                const shift_date = Array.isArray(row) && row.length ? (row as any[])[0].shift_date : (row as any)?.shift_date
-                if (shift_date) {
-                  setCollapsedDates(s => ({ ...s, [shift_date]: false }))
-                }
-              }
-            } catch (e) {
-              // ignore expansion errors
-            }
-          } catch (e) {
-            // ignore
-          }
-        })()
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    window.addEventListener('entry-updated', onEntryUpdated as EventListener)
-    return () => {
-      window.removeEventListener('entry-updated', onEntryUpdated as EventListener)
-      try {
-        if (realtimeSub && typeof realtimeSub.unsubscribe === 'function') {
-          realtimeSub.unsubscribe()
+        // ev may be a CustomEvent with detail about the update
+        const ce = ev as CustomEvent
+        // Only refresh when an id/status is provided or simply refresh anyway
+        if (ce && ce.detail) {
+          fetchEntries()
+        } else {
+          fetchEntries()
         }
       } catch (e) {
-        // ignore cleanup errors
+        // swallow errors
+        fetchEntries()
       }
     }
-  }, [site, getDb])
+    window.addEventListener('entry-updated', handler as EventListener)
+    return () => window.removeEventListener('entry-updated', handler as EventListener)
+  }, [fetchEntries])
 
   const filteredEntries = entries.filter(isInTimeframe)
+
+  const displayMaterial = (mt?: string) => {
+    if (!mt) return '-'
+    const raw = String(mt).trim()
+    const key = raw.toLowerCase().replace(/[_\-\s\(\)]+/g, ' ').trim()
+    // Rehabilitation first (covers OB_REHAB, OB_REHABILITATION, rehab, etc.)
+    if (key.includes('rehab') || key.includes('rehabilit')) return 'OB (Rehabilitation)'
+    // Coal
+    if (key.includes('coal')) return 'Coal'
+    // Mining/OB (but avoid mapping rehab again)
+    if (key === 'ob' || key.includes(' min') || key.includes('mining') || key.startsWith('ob ')) return 'OB (Mining)'
+    // Fallback: normalize common separators and upper-case known abbreviations
+    if (key === 'ob mining') return 'OB (Mining)'
+    if (key === 'ob rehabilitation') return 'OB (Rehabilitation)'
+    // Preserve original casing for other materials
+    return raw
+  }
 
   useEffect(() => {
     // Derive metrics from the currently filtered entries so cards reflect the selected view.
@@ -407,7 +464,7 @@ export default function SupervisorDashboard() {
       const grouped: Record<string, ShiftSummary> = {}
       const rows = (data ?? []) as any[]
       rows.forEach((entry: any) => {
-        const material = entry.material_type || 'Unknown'
+        const material = displayMaterial(entry.material_type) || 'Unknown'
         if (!grouped[material]) {
           grouped[material] = {
             material,
@@ -453,6 +510,7 @@ export default function SupervisorDashboard() {
           shift_date,
           hour,
           material_type,
+          rejection_reason,
           activity,
           number_of_loads,
           haul_distance,
@@ -600,7 +658,19 @@ export default function SupervisorDashboard() {
           <div className="metric-value">{metrics.pending_reviews}</div>
           <div className="metric-sub">Awaiting approval — click to view</div>
         </div>
-        <div className="metric-card">
+        <div
+          className="metric-card"
+          role="button"
+          tabIndex={0}
+          onClick={() => { navigate('/exceptions') }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              navigate('/exceptions')
+            }
+          }}
+          style={{ cursor: 'pointer' }}
+        >
           <div className="metric-title">ACTIVE EXCEPTIONS</div>
           <div className="metric-value">{metrics.active_exceptions}</div>
           <div className="metric-sub">Require attention</div>
@@ -631,30 +701,34 @@ export default function SupervisorDashboard() {
                 {sortedDates.map(date => {
                       const group = grouped[date]
                       const isCollapsed = collapsedDates[date] ?? (date !== todayStr)
-                      const categories = ['OB (Mining)', 'OB (Rehabilitation)', 'Coal']
-                      const others = group.filter(e => !categories.includes(e.material_type || ''))
+                              const categories = ['OB (Mining)', 'OB (Rehabilitation)', 'Coal']
+                              const others = group.filter(e => !categories.includes(displayMaterial(e.material_type)))
                       return (
                         <div key={date} className="date-group">
                           <div className="group-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                               <button
+                                type="button"
                                 onClick={() => setCollapsedDates(s => ({ ...s, [date]: !isCollapsed }))}
                                 aria-expanded={!isCollapsed}
+                                title={isCollapsed ? `Expand ${date}` : `Collapse ${date}`}
                                 style={{
                                   cursor: 'pointer',
                                   border: 'none',
                                   background: 'transparent',
-                                  padding: 6,
+                                  padding: 8,
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  borderRadius: 6,
+                                  borderRadius: 8,
+                                  minWidth: 36,
                                 }}
                                 aria-label={isCollapsed ? `Expand ${date}` : `Collapse ${date}`}
                               >
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 160ms ease', display: 'block', color: '#444' }} aria-hidden>
                                   <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="currentColor" />
-                                </svg>
+                                  </svg>
+                                  <span style={{position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0}}>{isCollapsed ? `Expand ${date}` : `Collapse ${date}`}</span>
                               </button>
                               <strong>{date}</strong>
                               <span style={{ color: '#666' }}>— {group.length} entries</span>
@@ -664,75 +738,121 @@ export default function SupervisorDashboard() {
 
                           {!isCollapsed && (
                             <div>
-                              {categories.map(cat => {
-                                const rows = group.filter(e => (e.material_type || '') === cat)
+                              {materialCategories.map(cat => {
+                                const rows = group.filter(e => displayMaterial(e.material_type) === cat)
                                 if (!rows.length) return null
+                                const catKey = `${date}|${cat}`
+                                const isCatCollapsed = !!collapsedMaterials[catKey]
                                 return (
                                   <div key={cat} style={{ marginTop: 12 }}>
-                                    <div style={{ fontWeight: 700, marginBottom: 8 }}>{cat}</div>
-                                    <table>
-                                      <thead>
-                                        <tr>
-                                            <th>MACHINE</th>
-                                            <th>MATERIAL</th>
-                                            <th>HOUR</th>
-                                            <th>ACTIVITY</th>
-                                          <th>LOADS</th>
-                                          <th>DIST (m)</th>
-                                          <th>STATUS</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {rows.map(entry => (
-                                          <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
-                                              <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
-                                              <td>{entry.material_type || '-'}</td>
-                                              <td>{entry.hour}:00</td>
-                                            <td>{entry.activity}</td>
-                                            <td>{entry.number_of_loads || '-'}</td>
-                                            <td>{entry.haul_distance || '-'}</td>
-                                            <td>
-                                              <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
-                                            </td>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <button
+                                          type="button"
+                                          onClick={() => setCollapsedMaterials(s => ({ ...s, [catKey]: !isCatCollapsed }))}
+                                          aria-expanded={!isCatCollapsed}
+                                          title={isCatCollapsed ? `Expand ${cat}` : `Collapse ${cat}`}
+                                          style={{ cursor: 'pointer', border: 'none', background: 'transparent', padding: 6, borderRadius: 8, minWidth: 36 }}
+                                        >
+                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ transform: isCatCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 160ms ease', display: 'block', color: '#444' }} aria-hidden>
+                                            <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="currentColor" />
+                                          </svg>
+                                          <span style={{position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0}}>{isCatCollapsed ? `Expand ${cat}` : `Collapse ${cat}`}</span>
+                                        </button>
+                                        <div style={{ fontWeight: 700 }}>{cat}</div>
+                                      </div>
+                                    </div>
+                                    {!isCatCollapsed && (
+                                      <table>
+                                        <thead>
+                                          <tr>
+                                              <th>MACHINE</th>
+                                              <th>MATERIAL</th>
+                                              <th>HOUR</th>
+                                              <th>ACTIVITY</th>
+                                            <th>LOADS</th>
+                                            <th>DIST (m)</th>
+                                            <th>STATUS</th>
                                           </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
+                                        </thead>
+                                        <tbody>
+                                          {rows.map(entry => (
+                                            <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
+                                                <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
+                                                <td>{displayMaterial(entry.material_type)}</td>
+                                                <td>{entry.hour}:00</td>
+                                              <td>{entry.activity}</td>
+                                              <td>{entry.number_of_loads || '-'}</td>
+                                              <td>{entry.haul_distance || '-'}</td>
+                                              <td>
+                                                <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
+                                              </td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    )}
                                   </div>
                                 )
                               })}
 
                               {others.length > 0 && (
                                 <div style={{ marginTop: 12 }}>
-                                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Other</div>
-                                  <table>
-                                    <thead>
-                                      <tr>
-                                          <th>MACHINE</th>
-                                          <th>MATERIAL</th>
-                                          <th>HOUR</th>
-                                          <th>ACTIVITY</th>
-                                        <th>LOADS</th>
-                                        <th>DIST (m)</th>
-                                        <th>STATUS</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {others.map(entry => (
-                                        <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
-                                            <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
-                                            <td>{entry.material_type || '-'}</td>
-                                            <td>{entry.hour}:00</td>
-                                          <td>{entry.activity}</td>
-                                          <td>{entry.number_of_loads || '-'}</td>
-                                          <td>{entry.haul_distance || '-'}</td>
-                                          <td>
-                                            <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
-                                          </td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
+                                  {(() => {
+                                    const otherKey = `${date}|Other`
+                                    const isOtherCollapsed = !!collapsedMaterials[otherKey]
+                                    return (
+                                      <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <button
+                                              type="button"
+                                              onClick={() => setCollapsedMaterials(s => ({ ...s, [otherKey]: !isOtherCollapsed }))}
+                                              aria-expanded={!isOtherCollapsed}
+                                              title={isOtherCollapsed ? 'Expand Other' : 'Collapse Other'}
+                                              style={{ cursor: 'pointer', border: 'none', background: 'transparent', padding: 6, borderRadius: 8, minWidth: 36 }}
+                                            >
+                                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ transform: isOtherCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 160ms ease', display: 'block', color: '#444' }} aria-hidden>
+                                                <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="currentColor" />
+                                              </svg>
+                                              <span style={{position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0}}>{isOtherCollapsed ? 'Expand Other' : 'Collapse Other'}</span>
+                                            </button>
+                                            <div style={{ fontWeight: 700 }}>Other</div>
+                                          </div>
+                                        </div>
+                                        {!isOtherCollapsed && (
+                                          <table>
+                                            <thead>
+                                              <tr>
+                                                  <th>MACHINE</th>
+                                                  <th>MATERIAL</th>
+                                                  <th>HOUR</th>
+                                                  <th>ACTIVITY</th>
+                                                <th>LOADS</th>
+                                                <th>DIST (m)</th>
+                                                <th>STATUS</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {others.map(entry => (
+                                                <tr key={String(entry.id)} onClick={() => handleRowClick(entry)} style={{ cursor: 'pointer' }}>
+                                                    <td className="machine-id">{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
+                                                    <td>{displayMaterial(entry.material_type)}</td>
+                                                    <td>{entry.hour}:00</td>
+                                                  <td>{entry.activity}</td>
+                                                  <td>{entry.number_of_loads || '-'}</td>
+                                                  <td>{entry.haul_distance || '-'}</td>
+                                                  <td>
+                                                    <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
+                                                  </td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
                                 </div>
                               )}
                             </div>
@@ -770,28 +890,32 @@ export default function SupervisorDashboard() {
               <p className="empty-state">No pending reviews.</p>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left', padding: 8 }}>Date</th>
-                    <th style={{ textAlign: 'left', padding: 8 }}>Machine</th>
-                    <th style={{ textAlign: 'left', padding: 8 }}>Hour</th>
-                    <th style={{ textAlign: 'left', padding: 8 }}>Activity</th>
-                    <th style={{ textAlign: 'left', padding: 8 }}>Loads</th>
-                    <th style={{ textAlign: 'left', padding: 8 }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pendingEntriesList.map((entry) => (
-                    <tr key={String(entry.id)} onClick={() => { handleRowClick(entry); setPendingModalOpen(false); }} style={{ cursor: 'pointer' }}>
-                      <td style={{ padding: 8 }}>{entry.shift_date}</td>
-                      <td style={{ padding: 8 }}>{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
-                      <td style={{ padding: 8 }}>{entry.hour}:00</td>
-                      <td style={{ padding: 8 }}>{entry.activity}</td>
-                      <td style={{ padding: 8 }}>{entry.number_of_loads ?? '-'}</td>
-                      <td style={{ padding: 8 }}>{entry.status}</td>
-                    </tr>
-                  ))}
-                </tbody>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: 'left', padding: 8 }}>MACHINE</th>
+                        <th style={{ textAlign: 'left', padding: 8 }}>MATERIAL</th>
+                        <th style={{ textAlign: 'left', padding: 8 }}>HOUR</th>
+                        <th style={{ textAlign: 'left', padding: 8 }}>ACTIVITY</th>
+                        <th style={{ textAlign: 'left', padding: 8 }}>LOADS</th>
+                        <th style={{ textAlign: 'left', padding: 8 }}>DIST (m)</th>
+                        <th style={{ textAlign: 'left', padding: 8 }}>STATUS</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pendingEntriesList.map((entry) => (
+                        <tr key={String(entry.id)} onClick={() => { handleRowClick(entry); setPendingModalOpen(false); }} style={{ cursor: 'pointer' }}>
+                          <td style={{ padding: 8 }}>{entry.assets?.[0]?.asset_code || entry.machine_id}</td>
+                          <td style={{ padding: 8 }}>{displayMaterial(entry.material_type)}</td>
+                          <td style={{ padding: 8 }}>{entry.hour}:00</td>
+                          <td style={{ padding: 8 }}>{entry.activity}</td>
+                          <td style={{ padding: 8 }}>{entry.number_of_loads ?? '-'}</td>
+                          <td style={{ padding: 8 }}>{entry.haul_distance ?? '-'}</td>
+                          <td style={{ padding: 8 }}>
+                            <span className={`status-badge ${entry.status.toLowerCase()}`}>{entry.status}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
               </table>
             )}
           </div>

@@ -85,7 +85,17 @@ export default function HourlyLogging() {
                 haul_distance: r.haul_distance,
               }))
               .filter(m => m.id)
-            setMachines(machinesFromPlan)
+            // Deduplicate by machine id to avoid duplicates from joins/cross-schema
+            const seen = new Set<string>()
+            const unique: any[] = []
+            for (const m of machinesFromPlan) {
+              const mid = String(m.id)
+              if (!seen.has(mid)) {
+                seen.add(mid)
+                unique.push(m)
+              }
+            }
+            setMachines(unique)
             return
           }
         } catch (err) {
@@ -142,7 +152,17 @@ export default function HourlyLogging() {
                   haul_distance: r.haul_distance,
                 }
               })
-            setMachines(machinesFromPlan)
+            // Deduplicate by id in case of duplicate assignment rows
+            const seen2 = new Set<string>()
+            const unique2: any[] = []
+            for (const m of machinesFromPlan) {
+              const mid = String(m.id)
+              if (!seen2.has(mid)) {
+                seen2.add(mid)
+                unique2.push(m)
+              }
+            }
+            setMachines(unique2)
           } else {
             setMachines([])
           }
@@ -457,17 +477,19 @@ export default function HourlyLogging() {
     }
   }
 
-  const handleBreakdown = async (reason: string, startTime: string) => {
+  const handleBreakdown = async (reason: string, startTime: string, operator?: string) => {
     if (!selectedMachine || selectedHour === null) return
-    // Insert into breakdowns table
+    // Insert into breakdowns table (include operator if provided)
     const db = getDb()
-    const { error } = await db.from('breakdowns').insert({
+    const payload: any = {
       asset_id: selectedMachine.id,
       site,
       reason,
       reported_by: user?.id,
       breakdown_start: startTime,
-    })
+    }
+    if (operator) payload.operator = operator
+    const { error } = await db.from('breakdowns').insert(payload)
     if (error) {
       alert('Failed to log breakdown: ' + error.message)
     } else {
@@ -848,14 +870,20 @@ function BreakdownModal({
   machine: Machine
   hour: number
   onClose: () => void
-  onSubmit: (reason: string, startTime: string) => void
+  onSubmit: (reason: string, startTime: string, operator?: string) => void
 }) {
   const [reason, setReason] = useState('')
   const [otherReason, setOtherReason] = useState('')
-  const [startTime, setStartTime] = useState(() => new Date().toISOString().slice(0, 16))
+  const [startTime, setStartTime] = useState(() => {
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${pad(now.getHours())}:${pad(now.getMinutes())}`
+  })
+
+  const [operator, setOperator] = useState('')
 
   const effectiveReason = reason === 'Other' ? otherReason.trim() : reason
-  const submitDisabled = !effectiveReason || !startTime
+  const submitDisabled = !effectiveReason || !startTime || !operator.trim()
 
   return (
     <div className="modal" role="dialog" aria-modal="true">
@@ -904,12 +932,24 @@ function BreakdownModal({
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <label htmlFor="startTime" style={{ fontWeight: 600 }}>Start Time</label>
+            <label htmlFor="startTime" style={{ fontWeight: 600 }}>Time of Breakdown</label>
             <input
-              type="datetime-local"
+              type="time"
               id="startTime"
               value={startTime}
               onChange={e => setStartTime(e.target.value)}
+              style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8 }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label htmlFor="operator" style={{ fontWeight: 600 }}>Name of Operator</label>
+            <input
+              id="operator"
+              type="text"
+              value={operator}
+              onChange={e => setOperator(e.target.value)}
+              placeholder="Operator name"
               style={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 8 }}
             />
           </div>
@@ -925,7 +965,12 @@ function BreakdownModal({
           </button>
           <button
             className="submit-btn danger"
-            onClick={() => onSubmit(effectiveReason, startTime)}
+            onClick={() => {
+              // compose an ISO timestamp for the current date + selected time
+              const today = new Date().toISOString().split('T')[0]
+              const iso = new Date(`${today}T${startTime}:00`)
+              onSubmit(effectiveReason, iso.toISOString(), operator.trim())
+            }}
             disabled={submitDisabled}
             style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '8px 14px', height: 40, minHeight: 40, fontSize: 14, lineHeight: '20px', boxSizing: 'border-box', verticalAlign: 'middle', border: '1px solid transparent', flex: '0 0 auto' }}
           >

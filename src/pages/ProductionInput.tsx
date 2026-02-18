@@ -161,8 +161,21 @@ export default function ProductionInput() {
           .limit(1)
 
         if (error) {
-          setActivePlanExists(false)
-          setActivePlanId(null)
+          // If the DB check errored, fall back to any locally-stored plan id
+          try {
+            const stored = typeof window !== 'undefined' && localStorage.getItem('currentPlanId')
+            const dismissed = stored && typeof window !== 'undefined' && localStorage.getItem(`dismissedPlan:${stored}`)
+            if (stored && !dismissed) {
+              setActivePlanExists(true)
+              setActivePlanId(stored)
+            } else {
+              setActivePlanExists(false)
+              setActivePlanId(null)
+            }
+          } catch (e) {
+            setActivePlanExists(false)
+            setActivePlanId(null)
+          }
         } else if (data && (data as any[]).length > 0) {
           const foundId = String((data as any[])[0].id)
           // respect any locally-dismissed plans (user ended shift locally)
@@ -180,17 +193,60 @@ export default function ProductionInput() {
             setActivePlanId(foundId)
           }
         } else {
+          // No active plan found in DB — check localStorage as a fallback
+          try {
+            const stored = typeof window !== 'undefined' && localStorage.getItem('currentPlanId')
+            const dismissed = stored && typeof window !== 'undefined' && localStorage.getItem(`dismissedPlan:${stored}`)
+            if (stored && !dismissed) {
+              setActivePlanExists(true)
+              setActivePlanId(stored)
+            } else {
+              setActivePlanExists(false)
+              setActivePlanId(null)
+            }
+          } catch (e) {
+            setActivePlanExists(false)
+            setActivePlanId(null)
+          }
+        }
+      } catch (e) {
+        // If the DB check threw, try the localStorage fallback before clearing state
+        try {
+          const stored = typeof window !== 'undefined' && localStorage.getItem('currentPlanId')
+          const dismissed = stored && typeof window !== 'undefined' && localStorage.getItem(`dismissedPlan:${stored}`)
+          if (stored && !dismissed) {
+            setActivePlanExists(true)
+            setActivePlanId(stored)
+          } else {
+            setActivePlanExists(false)
+            setActivePlanId(null)
+          }
+        } catch (errInner) {
           setActivePlanExists(false)
           setActivePlanId(null)
         }
-      } catch (e) {
-        setActivePlanExists(false)
-        setActivePlanId(null)
       }
     }
 
     void checkActivePlan()
   }, [site, getDb])
+
+  // Fallback: if a planId is present in localStorage it's likely the user
+  // already started a plan in another tab or earlier — reflect that in the UI
+  useEffect(() => {
+    try {
+      if (typeof window === 'undefined') return
+      const stored = localStorage.getItem('currentPlanId')
+      if (!stored) return
+      const dismissed = localStorage.getItem(`dismissedPlan:${stored}`)
+      if (dismissed) return
+      // show the active plan from localStorage as a best-effort fallback
+      setActivePlanExists(true)
+      setActivePlanId(stored)
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [])
 
   const handleDailyPlanConfirm = (types: string[]) => {
     // Fetch available assets from the sileko.assets table matching the
@@ -445,14 +501,39 @@ export default function ProductionInput() {
       }
 
       // 2) Insert machine assignments for the plan into the same schema
+      // Deduplicate machines so the same vehicle isn't inserted multiple times
+      // (user may accidentally assign a machine to multiple materials or re-submit
+      // against an existing plan that already has machines).
       const assignmentsToInsert: any[] = []
+      const seenMachineIds = new Set<string>()
+
+      try {
+        const { data: existingMachines } = await db
+          .from('daily_plan_machines')
+          .select('machine_id')
+          .eq('daily_plan_id', plan.id)
+        if (existingMachines && Array.isArray(existingMachines)) {
+          for (const r of existingMachines) {
+            if (r && r.machine_id) seenMachineIds.add(String(r.machine_id))
+          }
+        }
+      } catch (e) {
+        // ignore; if this query fails we'll fall back to inserting but still
+        // protect against duplicates within this submission via seenMachineIds
+      }
       for (const material of ['OB', 'OB_REHAB', 'COAL'] as const) {
         const machineIds = assignments[material] || []
         const distance = distances[material]
         for (const machineId of machineIds) {
+          const mId = String(machineId)
+          if (seenMachineIds.has(mId)) {
+            // skip duplicate assignment for this machine (already on plan or seen earlier)
+            continue
+          }
+          seenMachineIds.add(mId)
           assignmentsToInsert.push({
             daily_plan_id: plan.id,
-            machine_id: machineId,
+            machine_id: mId,
             material_type: material,
             haul_distance: distance ?? null,
           })
@@ -493,14 +574,34 @@ export default function ProductionInput() {
   }
 
   // ---------- Render Steps ----------
+  // Compute a direct localStorage fallback at render time so the UI
+  // shows an active plan banner even if the DB check hasn't completed
+  // or failed for some reason.
+  let localStoredPlanId: string | null = null
+  let localStoredActive = false
+  try {
+    if (typeof window !== 'undefined') {
+      const s = localStorage.getItem('currentPlanId')
+      if (s) {
+        const dismissed = localStorage.getItem(`dismissedPlan:${s}`)
+        if (!dismissed) {
+          localStoredPlanId = s
+          localStoredActive = true
+        }
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+
   return (
     <Layout activePage="/production-input">
       {step === 1 && (
-          <DailyPlanningStep
+        <DailyPlanningStep
           onNext={handleDailyPlanConfirm}
           initialSelected={selectedTypes}
-          activePlanExists={activePlanExists}
-          activePlanId={activePlanId}
+          activePlanExists={activePlanExists || localStoredActive}
+          activePlanId={activePlanId || localStoredPlanId}
           selectedGroup={selectedGroup}
           selectedShift={selectedShift}
           onGroupChange={g => {

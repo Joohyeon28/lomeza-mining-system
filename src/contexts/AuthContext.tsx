@@ -28,11 +28,45 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 }
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      if (session?.user) fetchUserDetails(session.user.id)
-      setLoading(false)
-    })
+    ;(async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session && session.user) {
+          setUser(session.user)
+          await fetchUserDetails(session.user.id)
+          setLoading(false)
+          return
+        }
+
+        // Fallback: if Supabase didn't return a session, try restoring a
+        // previously saved session from localStorage. This helps when the
+        // Supabase client didn't rehydrate its internal storage (rare but
+        // can happen in some dev/proxy setups or storage-restricted browsers).
+        const raw = localStorage.getItem('lomeza:session')
+        if (raw) {
+          try {
+            const saved = JSON.parse(raw)
+            // saved should contain an object with access_token and refresh_token
+            if (saved?.access_token && saved?.refresh_token) {
+              const { data: restored, error: restoreErr } = await supabase.auth.setSession({
+                access_token: saved.access_token,
+                refresh_token: saved.refresh_token,
+              })
+              if (!restoreErr && restored?.session?.user) {
+                setUser(restored.session.user)
+                await fetchUserDetails(restored.session.user.id)
+              }
+            }
+          } catch (e) {
+            // ignore malformed JSON or restore errors
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to read auth session on startup', e)
+      } finally {
+        setLoading(false)
+      }
+    })()
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
@@ -40,6 +74,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       else {
         setRole(null)
         setSite(null)
+        try {
+          localStorage.removeItem('lomeza:session')
+        } catch (e) {
+          // ignore
+        }
       }
     })
 
@@ -96,10 +135,37 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     // setSite and setRole will be updated by onAuthStateChange
+    // Persist session to localStorage as a defensive fallback in case the
+    // Supabase client does not rehydrate its internal storage on a reload.
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        const toSave = {
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+          user: session.user,
+        }
+        try {
+          localStorage.setItem('lomeza:session', JSON.stringify(toSave))
+        } catch (e) {
+          // ignore storage errors
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 
   async function signOut() {
-    await supabase.auth.signOut()
+    try {
+      await supabase.auth.signOut()
+    } finally {
+      try {
+        localStorage.removeItem('lomeza:session')
+      } catch (e) {
+        // ignore
+      }
+    }
   }
 
   // Returns a Supabase client for the user's site schema

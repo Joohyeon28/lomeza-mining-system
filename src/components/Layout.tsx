@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react'
+import { type ReactNode, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 
@@ -10,6 +10,20 @@ interface LayoutProps {
 export default function Layout({ children, activePage }: LayoutProps) {
   const { user, role, site, displayName, signOut } = useAuth()
   const navigate = useNavigate()
+
+  // Keep the global background in the app (avoid showing the login black background
+  // briefly during client-side route transitions). We add a body class while the
+  // app layout is mounted and remove it on unmount.
+  useEffect(() => {
+    try {
+      document.body.classList.add('app-mounted')
+    } catch (e) {
+      // ignore (SSR or restricted env)
+    }
+    // Intentionally do not remove the class on unmount to avoid a brief
+    // background flash during client-side navigation where Layout may
+    // unmount and remount. The class will persist for the app session.
+  }, [])
 
   // Determine navigation links based on role
   const navLinks = (() => {

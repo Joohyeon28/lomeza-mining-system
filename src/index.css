@@ -7,3 +7,18 @@ html, body, #root {
   margin: 0;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
 }
+
+/* When the app is mounted (logged-in), prefer the app content background
+   instead of the login black background to avoid flashes during navigation. */
+body.app-mounted, body.app-mounted #root {
+  background: #f7f9fb; /* same as .content background */
+}
+
+/* Subtle hover highlight for production-history rows (applies to supervisor/controller tables) */
+.performance table tbody tr:hover {
+  background: rgba(59,130,246,0.04); /* very light blue */
+}
+
+.performance table tbody tr:focus-within {
+  background: rgba(59,130,246,0.06);
+}
