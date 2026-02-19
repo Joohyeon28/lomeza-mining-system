@@ -49,11 +49,30 @@ export default function ControllerDashboard() {
   const [timeframe, setTimeframe] = useState<'shift' | 'week' | 'month' | 'all'>('shift')
   const [shiftMode, setShiftMode] = useState<'full' | 'shiftA' | 'shiftB' | 'current'>('current')
   const [selectedDate, setSelectedDate] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && parsed.selectedDate) return parsed.selectedDate
+      }
+    } catch (e) {
+      // ignore
+    }
     const d = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
   })
   const [selectedWeek, setSelectedWeek] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && parsed.selectedWeek) return parsed.selectedWeek
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const getISOWeek = (dt: Date) => {
       const tmp = new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate()))
       tmp.setUTCDate(tmp.getUTCDate() + 3 - ((tmp.getUTCDay() + 6) % 7))
@@ -65,6 +84,15 @@ export default function ControllerDashboard() {
     return w
   })
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && parsed.selectedMonth) return parsed.selectedMonth
+      }
+    } catch (e) {
+      // ignore
+    }
     const d = new Date()
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
@@ -145,6 +173,11 @@ export default function ControllerDashboard() {
     const t = new Date()
     return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`
   })()
+
+  const formatSite = (s?: string | null) => {
+    if (!s) return s
+    return String(s).split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ')
+  }
 
   const isInTimeframe = (e: ProductionEntry) => {
     if (timeframe === 'all') return true
@@ -304,7 +337,17 @@ export default function ControllerDashboard() {
                 if (String(ent.activity).toLowerCase() !== 'breakdown') return ent
                 const key = `${ent.machine_id}|${ent.shift_date}`
                 const matches = bdMap[key]
-                if (matches && matches.some((m: any) => String(m.status).toUpperCase() === 'ACKNOWLEDGED')) {
+                const isAcknowledgedMatch = (m: any) => {
+                  try {
+                    if (String(m.status || '').toUpperCase() === 'ACKNOWLEDGED') return true
+                    if (m.acknowledged === true) return true
+                    if (String(m.acknowledged || '').toLowerCase() === 'true') return true
+                  } catch (e) {
+                    // ignore
+                  }
+                  return false
+                }
+                if (matches && matches.some(isAcknowledgedMatch)) {
                   return { ...ent, status: 'ACKNOWLEDGED' }
                 }
                 return ent
@@ -328,14 +371,21 @@ export default function ControllerDashboard() {
       const dates = Array.from(new Set(filled.map(e => e.shift_date))).sort((a, b) => b.localeCompare(a))
       const initCollapsed: Record<string, boolean> = {}
       for (const d of dates) initCollapsed[d] = d !== localToday
-      setCollapsedDates(initCollapsed)
+      // Preserve any existing persisted state, but merge in new dates with defaults
+      setCollapsedDates(prev => {
+        if (prev && Object.keys(prev).length > 0) return { ...initCollapsed, ...prev }
+        return initCollapsed
+      })
       // initialize per-date material collapse state (default: expanded)
       const initMat: Record<string, boolean> = {}
       for (const d of dates) {
         for (const c of materialCategories) initMat[`${d}|${c}`] = false
         initMat[`${d}|Other`] = false
       }
-      setCollapsedMaterials(initMat)
+      setCollapsedMaterials(prev => {
+        if (prev && Object.keys(prev).length > 0) return { ...initMat, ...prev }
+        return initMat
+      })
     }
     setLoading(false)
   }, [getDb, user, site, localToday])
@@ -479,7 +529,7 @@ export default function ControllerDashboard() {
       <div className="dashboard-header">
         <h1>MY PRODUCTION LOGS</h1>
         <p>
-          {site} – {new Date().toLocaleDateString()}
+          {formatSite(site)} – {new Date().toLocaleDateString()}
         </p>
       </div>
 

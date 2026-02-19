@@ -16,6 +16,10 @@ interface Machine {
 export default function SupervisorLiveSite() {
   const { site } = useAuth()
   const getDb = useDb()
+  const formatSite = (s?: string | null) => {
+    if (!s) return s
+    return String(s).split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ')
+  }
   const [machines, setMachines] = useState<Machine[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -57,7 +61,7 @@ export default function SupervisorLiveSite() {
         {loading ? (
           <p>Loading machines...</p>
         ) : machines.length === 0 ? (
-          <p className="empty-state">No machines found for {site}.</p>
+          <p className="empty-state">No machines found for {formatSite(site)}.</p>
         ) : (
           machines.map((machine) => (
             <div key={machine.id} className="machine-card">
@@ -72,7 +76,7 @@ export default function SupervisorLiveSite() {
                   <span>Type:</span> {machine.asset_type}
                 </div>
                 <div>
-                  <span>Site:</span> {machine.site}
+                  <span>Site:</span> {formatSite(machine.site)}
                 </div>
                 <div>
                   <span>Location:</span> {machine.location}

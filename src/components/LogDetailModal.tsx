@@ -439,29 +439,6 @@ export default function LogDetailModal({
                   >
                     Go to Exceptions
                   </button>
-                  {String(breakdown.status || '').toUpperCase() !== 'ACKNOWLEDGED' && (
-                    <button
-                      className="submit-btn"
-                      onClick={async () => {
-                        try {
-                          setActionLoading(true)
-                          const db = getDb()
-                          const { error } = await db.from('breakdowns').update({ status: 'ACKNOWLEDGED' }).eq('id', breakdown.id)
-                          if (error) throw error
-                          // notify other views
-                          try { window.dispatchEvent(new CustomEvent('entry-updated', { detail: { id: breakdown.id, source: 'breakdown' } })) } catch (e) {}
-                          onClose()
-                        } catch (e: any) {
-                          setActionError(String(e))
-                        } finally {
-                          setActionLoading(false)
-                        }
-                      }}
-                      style={{ height: 40 }}
-                    >
-                      {actionLoading ? 'Acknowledging...' : 'Acknowledge'}
-                    </button>
-                  )}
                 </>
               ) : null}
             </div>

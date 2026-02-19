@@ -8,6 +8,10 @@ interface LayoutProps {
 }
 
 export default function Layout({ children, activePage }: LayoutProps) {
+  const formatSite = (s?: string) => {
+    if (!s) return s
+    return String(s).split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ')
+  }
   const { user, role, site, displayName, signOut } = useAuth()
   const navigate = useNavigate()
 
@@ -57,7 +61,7 @@ export default function Layout({ children, activePage }: LayoutProps) {
       <aside className="sidebar">
         <div className="logo">
           LOMEZA<br />
-          <span>{site || 'ALL SITES'}</span>
+          <span>{site ? formatSite(site) : 'ALL SITES'}</span>
         </div>
 
         <nav>

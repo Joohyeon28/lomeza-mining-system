@@ -14,6 +14,10 @@ type Asset = {
 
 export default function WorkshopAssets() {
   const workshopDb = useWorkshopDb()
+  const formatSite = (s?: string) => {
+    if (!s) return s
+    return String(s).split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ')
+  }
   const [assets, setAssets] = useState<Asset[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -82,7 +86,7 @@ export default function WorkshopAssets() {
                 </div>
                 <div>
                   <span>WORKSHOP</span>
-                  <strong>{asset.site}</strong>
+                  <strong>{formatSite(asset.site)}</strong>
                 </div>
                 <div>
                   <span>LOCATION</span>
