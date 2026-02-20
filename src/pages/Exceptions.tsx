@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useDb } from '../hooks/useDb'
 import { getClientForSchema } from '../lib/supabaseClient'
 import { useAuth } from '../contexts/AuthContext'
+import { queryAllSchemas, DEFAULT_MULTI_SCHEMAS } from '../lib/multiSchema'
 import Layout from '../components/Layout'
 
 const formatSite = (s?: string) => {
@@ -20,7 +21,7 @@ interface Exception {
 
 export default function Exceptions() {
   const getDb = useDb()
-  const { user, displayName } = useAuth()
+  const { user, displayName, role } = useAuth()
   const [exceptions, setExceptions] = useState<Exception[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -29,44 +30,59 @@ export default function Exceptions() {
   const fetchExceptions = async () => {
     setLoading(true)
     try {
-      // fetch explicit exceptions
-      const { data: exData, error: exError } = await getDb()
-        .from('exceptions')
-        .select(`
-          id,
-          reason,
-          status,
-          site,
-          created_at,
-          assets ( asset_code )
-        `)
-        .in('status', ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'])
-        .order('created_at', { ascending: false })
+      let exData: any[] = []
+      let bdData: any[] = []
 
-      if (exError) throw exError
+      // If admin, fetch across schemas and tag with _schema
+      const isAdmin = role && String(role).toLowerCase() === 'admin'
+      if (isAdmin) {
+        const exAll = await queryAllSchemas<any>(async (client) => {
+          const res = await client
+            .from('exceptions')
+            .select(`id,reason,status,site,created_at,assets ( asset_code )`)
+            .in('status', ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'])
+            .order('created_at', { ascending: false })
+          return { data: res.data, error: res.error }
+        }, DEFAULT_MULTI_SCHEMAS)
+        exData = exAll
 
-      // fetch breakdown records. Try to include `operator` where available,
-      // but fall back to a minimal select if the column isn't exposed in this schema.
-      let bdData = null
-      try {
-        // first attempt: include operator
-        let res = await getDb()
-          .from('breakdowns')
-          .select(`id,reason,status,site,breakdown_start,reported_by,operator,acknowledged,acknowledged_by,acknowledged_at,assets ( asset_code )`)
-          .order('breakdown_start', { ascending: false })
-        bdData = res.data
-        if (res.error) {
-          // fallback: try without operator to avoid schema-specific column errors
-          const res2 = await getDb()
+        const bdAll = await queryAllSchemas<any>(async (client) => {
+          const res = await client
             .from('breakdowns')
             .select(`id,reason,status,site,breakdown_start,reported_by,acknowledged,acknowledged_by,acknowledged_at,assets ( asset_code )`)
             .order('breakdown_start', { ascending: false })
-          bdData = res2.data
-          if (res2.error) throw res2.error
+          return { data: res.data, error: res.error }
+        }, DEFAULT_MULTI_SCHEMAS)
+        bdData = bdAll
+      } else {
+        // site-scoped fetch
+        const { data: _exData, error: exError } = await getDb()
+          .from('exceptions')
+          .select(`
+            id,
+            reason,
+            status,
+            site,
+            created_at,
+            assets ( asset_code )
+          `)
+          .in('status', ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'])
+          .order('created_at', { ascending: false })
+
+        if (exError) throw exError
+        exData = _exData || []
+
+        // fetch breakdowns from current schema
+        try {
+          let res = await getDb()
+            .from('breakdowns')
+            .select(`id,reason,status,site,breakdown_start,reported_by,acknowledged,acknowledged_by,acknowledged_at,assets ( asset_code )`)
+            .order('breakdown_start', { ascending: false })
+          bdData = res.data || []
+          if (res.error) throw res.error
+        } catch (bdErr: any) {
+          throw bdErr
         }
-      } catch (bdErr: any) {
-        // surface the error to the outer handler
-        throw bdErr
       }
 
       const formattedExceptions = (exData ?? []).map((item: any) => ({
@@ -77,6 +93,7 @@ export default function Exceptions() {
         site: item.site,
         created_at: item.created_at,
         source: 'exception' as const,
+        _schema: item._schema,
       }))
 
       // try to resolve reporter ids to display names
@@ -132,6 +149,7 @@ export default function Exceptions() {
         acknowledged_by: item.acknowledged_by,
         acknowledged_at: item.acknowledged_at,
         source: 'breakdown' as const,
+        _schema: item._schema,
       }))
 
       // merge and sort by created_at desc
@@ -146,9 +164,9 @@ export default function Exceptions() {
 
   useEffect(() => {
     fetchExceptions()
-  }, [getDb])
+  }, [getDb, role])
 
-  const updateStatus = async (id: string, newStatus: string, source: 'exception' | 'breakdown' = 'exception'): Promise<boolean> => {
+  const updateStatus = async (id: string, newStatus: string, source: 'exception' | 'breakdown' = 'exception', schema?: string): Promise<boolean> => {
     try {
       const table = source === 'breakdown' ? 'breakdowns' : 'exceptions'
       const payload: Record<string, any> = { status: newStatus }
@@ -226,8 +244,17 @@ export default function Exceptions() {
         }
       }
 
-      // Try primary client
-      const primaryRes = await tryUpdateWithFallback(getDb(), table, payload)
+      // Try primary client (if schema provided use that first)
+      if (schema) {
+        const primaryRes = await tryUpdateWithFallback(getClientForSchema(schema), table, payload)
+        if (primaryRes.success) {
+          try { window.dispatchEvent(new CustomEvent('entry-updated', { detail: { id, source } })) } catch (e) {}
+          return true
+        }
+        console.error(`Update failed for provided schema '${schema}':`, primaryRes.error)
+      }
+
+      let primaryRes = await tryUpdateWithFallback(getDb(), table, payload).catch((e) => ({ success: false, error: e }))
       if (primaryRes.success) {
         try { window.dispatchEvent(new CustomEvent('entry-updated', { detail: { id, source } })) } catch (e) {}
         return true
@@ -291,7 +318,7 @@ export default function Exceptions() {
       return updated
     }))
 
-    const ok = await updateStatus(exception.id, targetStatus, source)
+    const ok = await updateStatus(exception.id, targetStatus, source, exception._schema)
 
     // remove updating mark
     setUpdatingIds(ids => ids.filter(i => i !== `${exception.source || 'exception'}-${exception.id}`))
@@ -318,6 +345,7 @@ export default function Exceptions() {
 
       <section className="performance">
         <h2>OPEN EXCEPTIONS</h2>
+        {notification && <p role="status">{notification.text}</p>}
         {loading ? (
             <p>Loading...</p>
           ) : exceptions.length === 0 ? (
@@ -351,9 +379,10 @@ export default function Exceptions() {
                         {exc.status !== 'RESOLVED' && (
                           <button
                             className="submit-btn small"
+                            disabled={updatingIds.includes(`${exc.source || 'exception'}-${exc.id}`)}
                             onClick={(e) => { e.stopPropagation(); handleAction(exc) }}
                           >
-                            {getNextAction(exc.status)}
+                            {updatingIds.includes(`${exc.source || 'exception'}-${exc.id}`) ? 'Saving...' : getNextAction(exc.status)}
                           </button>
                         )}
                       </td>

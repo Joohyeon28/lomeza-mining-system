@@ -12,6 +12,7 @@ import SupervisorLiveSite from './pages/SupervisorLiveSite'
 import Workshop from './pages/Workshop'
 import WorkshopAssets from './pages/WorkshopAssets'
 import Exceptions from './pages/Exceptions'
+import AdminOperationsReview from './pages/AdminOperationsReview'
 
 // Controller pages
 import ControllerDashboard from './pages/ControllerDashboard'
@@ -80,6 +81,14 @@ function App() {
           element={
             <ProtectedRoute>
               <Workshop />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin-operations-review"
+          element={
+            <ProtectedRoute>
+              <AdminOperationsReview />
             </ProtectedRoute>
           }
         />

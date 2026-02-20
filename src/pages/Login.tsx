@@ -6,6 +6,7 @@ import bgImage from '../assets/images/bg.jpg'
 
 export default function Login() {
   const [selectedSite, setSelectedSite] = useState<string | null>(null)
+  const [hasSelectedSite, setHasSelectedSite] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -17,23 +18,31 @@ export default function Login() {
   const from = (location.state as any)?.from?.pathname ?? '/'
 
   // Handle site selection
-  const handleSiteSelect = (site: string) => {
+  const handleSiteSelect = (site: string | null) => {
     setSelectedSite(site)
+    setHasSelectedSite(true)
     setError(null) // clear any previous errors
   }
 
   // Handle login form submit
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    if (!selectedSite) {
+    if (!hasSelectedSite) {
       setError('Please select a site first.')
       return
     }
     setError(null)
     setSubmitting(true)
     try {
-      await signIn(email, password, selectedSite)
-      navigate(from, { replace: true })
+      if (typeof signIn !== 'function') {
+        throw new Error('Authentication service unavailable. Ensure the app is wrapped with AuthProvider.')
+      }
+      const role = await signIn(email, password, selectedSite)
+      if (role === 'admin') {
+        navigate('/admin-operations-review', { replace: true })
+      } else {
+        navigate(from, { replace: true })
+      }
     } catch (err: any) {
       setError(err?.message ?? 'Failed to sign in')
     } finally {
@@ -42,7 +51,7 @@ export default function Login() {
   }
 
   // If no site selected yet – show site selection UI
-  if (!selectedSite) {
+  if (!hasSelectedSite) {
     return (
       <div
         className="login-body"
@@ -73,7 +82,7 @@ export default function Login() {
           <h1 className="brand" style={{ marginBottom: 6 }}>LOMEZA</h1>
           <p className="tagline">Trackless Mobile Machinery Management</p>
           <h3 style={{ margin: '28px 0 18px', color: '#fff' }}>Select your site</h3>
-          <div style={{ display: 'flex', gap: 20, justifyContent: 'center' }}>
+          <div style={{ display: 'flex', gap: 20, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={() => handleSiteSelect('Sileko')}
               style={{
@@ -108,6 +117,21 @@ export default function Login() {
             </button>
           </div>
           <small className="footer-note">Secure access to mining operations • Lomeza © 2025</small>
+          <div style={{ marginTop: 12 }}>
+            <button
+              onClick={() => handleSiteSelect(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#ffb300',
+                textDecoration: 'underline',
+                cursor: 'pointer',
+                fontSize: 14,
+              }}
+            >
+              Admin login
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -187,9 +211,9 @@ export default function Login() {
           >
             <div style={{ marginBottom: 20 }}>
               <span className="site-label">Chosen site</span>
-              <div className="site-name">{selectedSite}</div>
+              <div className="site-name">{selectedSite || 'ADMIN (ALL SITES)'}</div>
             </div>
-            <button className="change-site-btn" onClick={() => setSelectedSite(null)}>
+            <button className="change-site-btn" onClick={() => { setSelectedSite(null); setHasSelectedSite(false) }}>
               ⟲ CHANGE SITE
             </button>
           </div>

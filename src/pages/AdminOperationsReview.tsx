@@ -1,7 +1,5 @@
-import { useState } from 'react'
-import { useDb } from '../hooks/useDb'
+import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { queryAllSchemas, DEFAULT_MULTI_SCHEMAS } from '../lib/multiSchema'
 import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
 
@@ -9,7 +7,6 @@ interface ProductionEntry {
   id: string
   shift_date: string
   hour: number
-  shift: string
   machine_id: string
   asset_code: string
   activity: string
@@ -17,7 +14,7 @@ interface ProductionEntry {
   number_of_loads: number
   haul_distance: number
   status: 'PENDING' | 'APPROVED' | 'REJECTED'
-  _schema?: string
+  site: string
 }
 
 interface Summary {
@@ -28,11 +25,8 @@ interface Summary {
   rejected: number
 }
 
-export default function SupervisorReview() {
-  const getDb = useDb()
-  const { role, site } = useAuth()
-  const isAdmin = role && String(role).toLowerCase() === 'admin'
-  const [siteFilter, setSiteFilter] = useState<string>(() => (isAdmin ? 'all' : site || ''))
+export default function AdminOperationsReview() {
+  const { site: userSite } = useAuth() // might be 'sileko', 'kalagadi', or null for global admin
   const formatSite = (s?: string) => {
     if (!s) return s
     return String(s).split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ')
@@ -40,6 +34,7 @@ export default function SupervisorReview() {
   const [selectedDate, setSelectedDate] = useState(
     new Date().toISOString().split('T')[0]
   )
+  const [siteFilter, setSiteFilter] = useState<string>('all')
   const [entries, setEntries] = useState<ProductionEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [summary, setSummary] = useState<Summary>({
@@ -50,62 +45,65 @@ export default function SupervisorReview() {
     rejected: 0,
   })
 
+  // Helper to fetch from a specific schema
+  const fetchFromSchema = async (schema: string, date: string): Promise<ProductionEntry[]> => {
+    const client = getClientForSchema(schema)
+    const { data, error } = await client
+      .from('production_entries')
+      .select(`
+        id,
+        shift_date,
+        hour,
+        machine_id,
+        assets ( asset_code ),
+        activity,
+        material_type,
+        number_of_loads,
+        haul_distance,
+        status
+      `)
+      .eq('shift_date', date)
+
+    if (error) {
+      console.error(`Error fetching from ${schema}:`, error)
+      return []
+    }
+    return (data || []).map((item: any) => ({
+      ...item,
+      asset_code: item.assets?.asset_code || item.machine_id,
+      site: schema === 'sileko' ? 'Sileko' : 'Kalagadi',
+    }))
+  }
+
   const loadProduction = async () => {
     setLoading(true)
     try {
-      let data: any[] = []
-      if (isAdmin) {
-        if (siteFilter === 'all') {
-          const all = await queryAllSchemas<any>(async (client) =>
-            await client
-              .from('production_entries')
-              .select(`id,shift_date,hour,shift,machine_id,assets ( asset_code ),activity,material_type,number_of_loads,haul_distance,status`)
-              .eq('shift_date', selectedDate)
-              .order('hour')
-          , DEFAULT_MULTI_SCHEMAS)
-          data = all
-        } else {
-          const schema = siteFilter
-          const client = getClientForSchema(schema)
-          const res = await client
-            .from('production_entries')
-            .select(`id,shift_date,hour,shift,machine_id,assets ( asset_code ),activity,material_type,number_of_loads,haul_distance,status`)
-            .eq('shift_date', selectedDate)
-            .order('hour')
-          if (res.error) throw res.error
-          data = (res.data || []).map((d: any) => ({ ...d, _schema: schema }))
-        }
-      } else {
-        const { data: _data, error } = await getDb()
-          .from('production_entries')
-          .select(
-            `id,shift_date,hour,shift,machine_id,assets ( asset_code ),activity,material_type,number_of_loads,haul_distance,status`
-          )
-          .eq('shift_date', selectedDate)
-          .order('hour')
-        if (error) throw error
-        data = _data || []
+      let siteEntries: ProductionEntry[] = []
+      if (siteFilter === 'all' || siteFilter === 'sileko') {
+        const sileko = await fetchFromSchema('sileko', selectedDate)
+        siteEntries = [...siteEntries, ...sileko]
+      }
+      if (siteFilter === 'all' || siteFilter === 'kalagadi') {
+        const kalagadi = await fetchFromSchema('kalagadi', selectedDate)
+        siteEntries = [...siteEntries, ...kalagadi]
       }
 
-      const formatted = (data || []).map((item: any) => ({
-        ...item,
-        asset_code: item.assets?.asset_code || item.machine_id,
-      }))
-
-      setEntries(formatted)
+      // Sort by hour and site
+      siteEntries.sort((a, b) => a.hour - b.hour)
+      setEntries(siteEntries)
 
       // Calculate summary
-      const totalLoads = formatted.reduce(
+      const totalLoads = siteEntries.reduce(
         (acc, e) => acc + (e.number_of_loads || 0),
         0
       )
-      const totalVolume = formatted.reduce(
+      const totalVolume = siteEntries.reduce(
         (acc, e) => acc + (e.number_of_loads || 0) * (e.haul_distance || 0),
         0
       )
-      const pending = formatted.filter((e) => e.status === 'PENDING').length
-      const approved = formatted.filter((e) => e.status === 'APPROVED').length
-      const rejected = formatted.filter((e) => e.status === 'REJECTED').length
+      const pending = siteEntries.filter((e) => e.status === 'PENDING').length
+      const approved = siteEntries.filter((e) => e.status === 'APPROVED').length
+      const rejected = siteEntries.filter((e) => e.status === 'REJECTED').length
 
       setSummary({ totalLoads, totalVolume, pending, approved, rejected })
     } catch (err) {
@@ -115,62 +113,60 @@ export default function SupervisorReview() {
     }
   }
 
-  const updateStatus = async (id: string, newStatus: string, schema?: string) => {
+  const updateStatus = async (id: string, newStatus: string, site: string) => {
+    const schema = site.toLowerCase() === 'sileko' ? 'sileko' : 'kalagadi'
+    const client = getClientForSchema(schema)
     try {
-      if (schema) {
-        const client = getClientForSchema(schema)
-        const { error } = await client.from('production_entries').update({ status: newStatus }).eq('id', id)
-        if (error) throw error
-      } else {
-        const { error } = await getDb()
-          .from('production_entries')
-          .update({ status: newStatus })
-          .eq('id', id)
-        if (error) throw error
-      }
+      const { error } = await client
+        .from('production_entries')
+        .update({ status: newStatus })
+        .eq('id', id)
 
-      // Refresh the list
-      await loadProduction()
+      if (error) throw error
+      await loadProduction() // refresh
     } catch (err) {
       console.error('Error updating status:', err)
     }
   }
 
   const bulkAction = async (newStatus: string) => {
-    const pending = entries.filter((e) => e.status === 'PENDING')
-    if (pending.length === 0) return
+    const pendingEntries = entries.filter((e) => e.status === 'PENDING')
+    // Group by site to update per schema
+    const bySite: Record<string, ProductionEntry[]> = {}
+    pendingEntries.forEach((e) => {
+      const site = e.site.toLowerCase() === 'sileko' ? 'sileko' : 'kalagadi'
+      if (!bySite[site]) bySite[site] = []
+      bySite[site].push(e)
+    })
 
     try {
-      if (isAdmin) {
-        // group by schema
-        const bySchema: Record<string, string[]> = {}
-        for (const e of pending) {
-          const schema = e._schema || (site || '')
-          if (!bySchema[schema]) bySchema[schema] = []
-          bySchema[schema].push(e.id)
-        }
-        await Promise.all(Object.entries(bySchema).map(async ([schema, ids]) => {
+      await Promise.all(
+        Object.entries(bySite).map(async ([schema, list]) => {
           const client = getClientForSchema(schema)
-          return client.from('production_entries').update({ status: newStatus }).in('id', ids)
-        }))
-      } else {
-        const ids = pending.map(e => e.id)
-        const { error } = await getDb().from('production_entries').update({ status: newStatus }).in('id', ids)
-        if (error) throw error
-      }
-
+          const ids = list.map((e) => e.id)
+          return client
+            .from('production_entries')
+            .update({ status: newStatus })
+            .in('id', ids)
+        })
+      )
       await loadProduction()
     } catch (err) {
-      console.error(`Error bulk ${newStatus}:`, err)
+      console.error('Bulk action error:', err)
     }
   }
 
+  useEffect(() => {
+    // Optionally load default data on mount
+    loadProduction()
+  }, [])
+
   return (
-    <Layout activePage="/supervisor-review">
+    <Layout activePage="/admin-operations-review">
       <div className="review-page">
         <header className="review-header">
-          <h1>Supervisor Review</h1>
-          <p className="subtext">Daily Production Verification & Approval</p>
+          <h1>Operations Review</h1>
+          <p className="subtext">Global production oversight</p>
         </header>
 
         <div className="review-bar">
@@ -182,13 +178,15 @@ export default function SupervisorReview() {
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
             />
-            {isAdmin && (
-              <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ marginLeft: 8, padding: '6px 8px' }}>
-                <option value="all">All Sites</option>
-                <option value="sileko">Sileko</option>
-                <option value="kalagadi">Kalagadi</option>
-              </select>
-            )}
+            <select
+              value={siteFilter}
+              onChange={(e) => setSiteFilter(e.target.value)}
+              style={{ marginLeft: '10px', padding: '8px' }}
+            >
+              <option value="all">All Sites</option>
+              <option value="sileko">Sileko</option>
+              <option value="kalagadi">Kalagadi</option>
+            </select>
             <button className="submit-btn" onClick={loadProduction}>
               Load Production
             </button>
@@ -229,23 +227,23 @@ export default function SupervisorReview() {
           ) : (
             <table className="review-table">
               <thead>
-                  <tr>
-                    {isAdmin && <th>Site</th>}
-                    <th>Machine</th>
-                    <th>Hour</th>
-                    <th>Activity</th>
-                    <th>Material</th>
-                    <th>Loads</th>
-                    <th>Distance</th>
-                    <th>Status</th>
-                    <th>Action</th>
-                  </tr>
+                <tr>
+                  <th>Site</th>
+                  <th>Machine</th>
+                  <th>Hour</th>
+                  <th>Activity</th>
+                  <th>Material</th>
+                  <th>Loads</th>
+                  <th>Distance</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
               </thead>
               <tbody>
                 {entries.map((entry) => (
-                  <tr key={entry.id}>
-                    {isAdmin && <td>{formatSite(entry._schema)}</td>}
-                    <td>{entry.asset_code}</td>
+                  <tr key={`${entry.site}-${entry.id}`}>
+                    <td>{formatSite(entry.site)}</td>
+                    <td className="machine-id">{entry.asset_code}</td>
                     <td>{entry.hour}:00</td>
                     <td>{entry.activity}</td>
                     <td>{entry.material_type}</td>
@@ -261,14 +259,14 @@ export default function SupervisorReview() {
                         <div className="action-buttons">
                           <button
                             className="approve-btn"
-                            onClick={() => updateStatus(entry.id, 'APPROVED')}
+                            onClick={() => updateStatus(entry.id, 'APPROVED', entry.site)}
                             title="Approve"
                           >
                             ✓
                           </button>
                           <button
                             className="reject-btn"
-                            onClick={() => updateStatus(entry.id, 'REJECTED')}
+                            onClick={() => updateStatus(entry.id, 'REJECTED', entry.site)}
                             title="Reject"
                           >
                             ✗

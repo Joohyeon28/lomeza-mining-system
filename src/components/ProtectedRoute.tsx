@@ -13,6 +13,9 @@ const roleAccess: Record<string, string[]> = {
   '/workshop/assets': ['Admin'],
   '/exceptions': ['Admin', 'Supervisor'],
 
+  // Admin-only pages
+  '/admin-operations-review': ['Admin'],
+
   // Controller
   '/controller-dashboard': ['Controller', 'Supervisor'],
   '/production-input': ['Controller', 'Supervisor'],

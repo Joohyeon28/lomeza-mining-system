@@ -32,8 +32,8 @@ export default function Layout({ children, activePage }: LayoutProps) {
   // Determine navigation links based on role
   const navLinks = (() => {
     const normalized = role ? role.toLowerCase() : ''
-    if (normalized === 'admin' || normalized === 'supervisor') {
-      const livePath = normalized === 'supervisor' ? '/supervisor-live-site' : '/live-site'
+    if (normalized === 'admin') {
+      const livePath = '/live-site'
       return [
         { path: '/dashboard', label: 'Dashboard' },
         { path: livePath, label: 'Live Site' },
@@ -41,7 +41,19 @@ export default function Layout({ children, activePage }: LayoutProps) {
         { path: '/workshop', label: 'Workshop' },
         { path: '/exceptions', label: 'Exceptions' }
       ]
-    } else if (normalized === 'controller') {
+    }
+
+    if (normalized === 'supervisor') {
+      const livePath = '/supervisor-live-site'
+      return [
+        { path: '/dashboard', label: 'Dashboard' },
+        { path: livePath, label: 'Live Site' },
+        { path: '/supervisor-review', label: 'Supervisor Review' },
+        { path: '/exceptions', label: 'Exceptions' }
+      ]
+    }
+
+    if (normalized === 'controller') {
       return [
         { path: '/controller-dashboard', label: 'My Dashboard' },
         { path: '/production-input', label: 'Production Input' },

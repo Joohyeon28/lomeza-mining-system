@@ -9,7 +9,7 @@ interface AuthContextType {
   displayName: string | null
   loading: boolean
   canAccessWorkshop: () => boolean
-  signIn: (email: string, password: string, selectedSite: string) => Promise<void>
+  signIn: (email: string, password: string, selectedSite: string | null) => Promise<string | null>
   signOut: () => Promise<void>
   // Returns a Supabase client pre‑configured with the user’s site schema
   getDb: () => ReturnType<typeof getSupabaseWithSchema>
@@ -102,7 +102,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }
 
-  async function signIn(email: string, password: string, selectedSite: string) {
+  async function signIn(email: string, password: string, selectedSite: string | null) {
     let signInResult
     try {
       signInResult = await supabase.auth.signInWithPassword({ email, password })
@@ -126,12 +126,34 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       throw new Error('User profile not found.')
     }
 
-    // Compare site case-insensitively
-    const profileSite = typeof userData.site === 'string' ? userData.site.toLowerCase() : userData.site
-    const requestedSite = typeof selectedSite === 'string' ? selectedSite.toLowerCase() : selectedSite
-    if (profileSite !== requestedSite) {
-      await supabase.auth.signOut()
-      throw new Error(`You are not registered under ${selectedSite}.`)
+    const userSite = userData.site?.toLowerCase() || null
+    const selected = selectedSite?.toLowerCase() || null
+
+    if (userSite === null) {
+      if (selected !== null) {
+        await supabase.auth.signOut()
+        throw new Error('Admin must use the "ADMIN (ALL SITES)" option.')
+      }
+    } else {
+      if (selected !== userSite) {
+        await supabase.auth.signOut()
+        throw new Error(`You are not registered under ${selectedSite}.`)
+      }
+    }
+
+    // Immediately set role/site in context so route guards see the updated role
+    try {
+      setRole(typeof userData.role === 'string' ? userData.role.toLowerCase() : userData.role)
+      setSite(typeof userData.site === 'string' ? userData.site.toLowerCase() : userData.site)
+      // If a session user is available, set it now to avoid a brief unauthenticated redirect
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user) setUser(session.user)
+      } catch (e) {
+        // ignore
+      }
+    } catch (e) {
+      // ignore
     }
 
     // setSite and setRole will be updated by onAuthStateChange
@@ -154,6 +176,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     } catch (e) {
       // ignore
     }
+    // Return the user's role (normalized) so callers can react immediately
+    return (typeof userData.role === 'string' ? userData.role.toLowerCase() : null)
   }
 
   async function signOut() {
