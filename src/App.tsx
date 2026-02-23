@@ -19,7 +19,22 @@ import ControllerDashboard from './pages/ControllerDashboard.tsx'
 import ProductionInput from './pages/ProductionInput.tsx'
 import HourlyLogging from './pages/HourlyLogging.tsx'
 
+import { useEffect } from 'react'
+
 function App() {
+  // Clear localStorage on browser close/tab exit globally
+  useEffect(() => {
+    const clearStorage = () => {
+      try {
+        localStorage.clear()
+      } catch (e) {
+        // ignore
+      }
+    }
+    window.addEventListener('unload', clearStorage)
+    return () => window.removeEventListener('unload', clearStorage)
+  }, [])
+
   function RoleRedirect() {
     const { user, role, loading } = useAuth()
     if (loading) return <div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>

@@ -37,6 +37,18 @@ interface ProductionEntry {
 // Stats interface intentionally omitted for supervisor view
 
 export default function SupervisorDashboard() {
+  // Clear localStorage on browser close/tab exit
+  useEffect(() => {
+    const clearStorage = () => {
+      try {
+        localStorage.clear()
+      } catch (e) {
+        // ignore
+      }
+    }
+    window.addEventListener('unload', clearStorage)
+    return () => window.removeEventListener('unload', clearStorage)
+  }, [])
   const { site } = useAuth()
   const getDb = useDb()
   const navigate = useNavigate()
@@ -80,7 +92,8 @@ export default function SupervisorDashboard() {
   const [viewBreakdown, setViewBreakdown] = useState<any | null>(null)
   const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({})
   const [collapsedMaterials, setCollapsedMaterials] = useState<Record<string, boolean>>({})
-  const materialCategories = ['OB (Mining)', 'OB (Rehabilitation)', 'Coal']
+  const isKalagadiSupervisor = (site?.toLowerCase() === 'kalagadi')
+  const materialCategories = ['OB (Mining)', 'OB (Rehabilitation)', isKalagadiSupervisor ? 'Manganese' : 'Coal']
   const [timeframe, setTimeframe] = useState<'shift' | 'week' | 'month' | 'all'>('shift')
   const [shiftMode, setShiftMode] = useState<'full' | 'shiftA' | 'shiftB' | 'current'>('current')
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -439,8 +452,10 @@ export default function SupervisorDashboard() {
     const key = raw.toLowerCase().replace(/[_\-\s\(\)]+/g, ' ').trim()
     // Rehabilitation first (covers OB_REHAB, OB_REHABILITATION, rehab, etc.)
     if (key.includes('rehab') || key.includes('rehabilit')) return 'OB (Rehabilitation)'
-    // Coal
-    if (key.includes('coal')) return 'Coal'
+    // Kalagadi: Coal becomes Manganese
+    if (isKalagadiSupervisor && key.includes('coal')) return 'Manganese'
+    if (!isKalagadiSupervisor && key.includes('coal')) return 'Coal'
+    if (isKalagadiSupervisor && key.includes('manganese')) return 'Manganese'
     // Mining/OB (but avoid mapping rehab again)
     if (key === 'ob' || key.includes(' min') || key.includes('mining') || key.startsWith('ob ')) return 'OB (Mining)'
     // Fallback: normalize common separators and upper-case known abbreviations

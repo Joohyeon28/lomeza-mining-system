@@ -766,6 +766,9 @@ function MaterialAssignmentStep({
   onRetry,
   registrySamples,
 }: { onNext: (a: any) => void; onBack?: () => void; machines: Machine[]; initialAssignments: any; loading?: boolean; onRetry?: () => void; registrySamples?: { schema: string; rows: any[] }[] }) {
+  // Use 'Manganese' instead of 'Coal' for kalagadi controllers
+  const site = (typeof window !== 'undefined' && localStorage.getItem('site')) || ''
+  const isKalagadiController = (site?.toLowerCase() === 'kalagadi')
   type MaterialKey = 'OB' | 'OB_REHAB' | 'COAL'
   const materials: MaterialKey[] = ['OB', 'OB_REHAB', 'COAL']
   const [assignments, setAssignments] = useState(initialAssignments)
@@ -877,6 +880,9 @@ function MaterialAssignmentStep({
   return (
     <section id="material-assignment">
       <h2>Assign Machines to Material</h2>
+      <div style={{ marginBottom: 8, color: '#666', fontSize: 13 }}>
+        {isKalagadiController ? 'Note: "Coal" is replaced by "Manganese" for Kalagadi.' : ''}
+      </div>
       <div className="machine-filters">
         <div className="filter-field">
           <label htmlFor="role-filter">Role</label>
@@ -1130,11 +1136,15 @@ function SummaryStep({
   selectedGroup?: 'A'|'B'|'C',
   selectedShift?: 'DAY'|'NIGHT',
 }) {
+  // Use 'Manganese' instead of 'Coal' for kalagadi controllers
+  const site = (typeof window !== 'undefined' && localStorage.getItem('site')) || ''
+  const isKalagadiController = (site?.toLowerCase() === 'kalagadi')
   const getMachine = (id: string) => machines.find(m => m.id === id)
 
   const materialDisplay = (material: string) => {
     if (material === 'OB') return 'Overburden (Mining)'
     if (material === 'OB_REHAB') return 'Overburden (Rehabilitation)'
+    if (isKalagadiController && material === 'COAL') return 'Manganese'
     return 'Coal'
   }
 

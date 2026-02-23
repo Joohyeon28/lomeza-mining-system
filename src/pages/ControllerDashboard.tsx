@@ -45,7 +45,9 @@ export default function ControllerDashboard() {
   const [viewBreakdown, setViewBreakdown] = useState<any | null>(null)
   const [collapsedDates, setCollapsedDates] = useState<Record<string, boolean>>({})
   const [collapsedMaterials, setCollapsedMaterials] = useState<Record<string, boolean>>({})
-  const materialCategories = ['OB (Mining)', 'OB (Rehabilitation)', 'Coal']
+  // Use 'Manganese' instead of 'Coal' for kalagadi controllers
+  const isKalagadiController = (site?.toLowerCase() === 'kalagadi')
+  const materialCategories = ['OB (Mining)', 'OB (Rehabilitation)', isKalagadiController ? 'Manganese' : 'Coal']
   const [timeframe, setTimeframe] = useState<'shift' | 'week' | 'month' | 'all'>('shift')
   const [shiftMode, setShiftMode] = useState<'full' | 'shiftA' | 'shiftB' | 'current'>('current')
   const [selectedDate, setSelectedDate] = useState<string>(() => {
@@ -520,7 +522,9 @@ export default function ControllerDashboard() {
     if (key === 'ob') return 'OB (Mining)'
     if (key.includes('rehab') || key.includes('rehabilitation')) return 'OB (Rehabilitation)'
     if (key.includes('min') || key.includes('mining')) return 'OB (Mining)'
-    if (key.includes('coal')) return 'Coal'
+    if (isKalagadiController && key.includes('coal')) return 'Manganese'
+    if (!isKalagadiController && key.includes('coal')) return 'Coal'
+    if (isKalagadiController && key.includes('manganese')) return 'Manganese'
     return mt
   }
 
