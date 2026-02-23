@@ -1,23 +1,23 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
-import Login from './pages/Login'
+import Login from './pages/Login.tsx'
 
 // Admin / Supervisor pages
-import Dashboard from './pages/Dashboard'
-import LiveSite from './pages/LiveSite'
-import SupervisorReview from './pages/SupervisorReview'
-import SupervisorDashboard from './pages/SupervisorDashboard'
-import SupervisorLiveSite from './pages/SupervisorLiveSite'
-import Workshop from './pages/Workshop'
-import WorkshopAssets from './pages/WorkshopAssets'
-import Exceptions from './pages/Exceptions'
-import AdminOperationsReview from './pages/AdminOperationsReview'
+import Dashboard from './pages/Dashboard.tsx'
+import LiveSite from './pages/LiveSite.tsx'
+import SupervisorReview from './pages/SupervisorReview.tsx'
+import SupervisorDashboard from './pages/SupervisorDashboard.tsx'
+import SupervisorLiveSite from './pages/SupervisorLiveSite.tsx'
+import Workshop from './pages/Workshop.tsx'
+import WorkshopAssets from './pages/WorkshopAssets.tsx'
+import Exceptions from './pages/Exceptions.tsx'
+import AdminOperationsReview from './pages/AdminOperationsReview.tsx'
 
 // Controller pages
-import ControllerDashboard from './pages/ControllerDashboard'
-import ProductionInput from './pages/ProductionInput'
-import HourlyLogging from './pages/HourlyLogging'
+import ControllerDashboard from './pages/ControllerDashboard.tsx'
+import ProductionInput from './pages/ProductionInput.tsx'
+import HourlyLogging from './pages/HourlyLogging.tsx'
 
 function App() {
   function RoleRedirect() {

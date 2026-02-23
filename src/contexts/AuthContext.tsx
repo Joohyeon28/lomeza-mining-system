@@ -82,12 +82,34 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     })
 
-    return () => listener?.subscription.unsubscribe()
+    // Clear stored session on page unload/close so localStorage isn't reused
+    // across browser sessions. Use both pagehide and beforeunload for
+    // broader compatibility (pagehide fires for bfcache navigation).
+    const clearSessionOnUnload = () => {
+      try {
+        localStorage.removeItem('lomeza:session')
+      } catch (e) {
+        // ignore storage errors
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', clearSessionOnUnload)
+      window.addEventListener('beforeunload', clearSessionOnUnload)
+    }
+
+    return () => {
+      listener?.subscription.unsubscribe()
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pagehide', clearSessionOnUnload)
+        window.removeEventListener('beforeunload', clearSessionOnUnload)
+      }
+    }
   }, [])
 
   async function fetchUserDetails(userId: string) {
     // Always query public.users
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('users')
       .select('*')
       .eq('id', userId)

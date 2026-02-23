@@ -217,7 +217,7 @@ export default function ControllerDashboard() {
     if (!user || !site) return
     // Initial load and refresh when entries are updated elsewhere
     fetchEntries()
-    const handler = (ev: Event) => {
+    const handler = () => {
       try { fetchEntries() } catch (e) { /* ignore */ }
     }
     window.addEventListener('entry-updated', handler as EventListener)

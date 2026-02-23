@@ -11,7 +11,7 @@ export function setCachedUser(id: string, user: any) {
   cache.set(id, user)
 }
 
-export async function fetchAndCacheUser(id: string, getDb: () => any, site?: string) {
+export async function fetchAndCacheUser(id: string, getDb: () => any, _site?: string) {
   if (!id) return null
   // prefer public first, then site-local, then global
   try {

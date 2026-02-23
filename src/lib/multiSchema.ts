@@ -1,6 +1,6 @@
 import { getClientForSchema } from './supabaseClient'
 
-export async function queryAllSchemas<T, R = T>(
+export async function queryAllSchemas<T>(
   queryFn: (client: ReturnType<typeof getClientForSchema>, schema: string) => Promise<{ data: T[] | null; error: any }>,
   schemas: string[] = ['sileko', 'kalagadi', 'workshop']
 ): Promise<(T & { _schema?: string })[]> {

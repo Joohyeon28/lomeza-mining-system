@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useAuth } from '../contexts/AuthContext'
 import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
 
@@ -26,7 +25,6 @@ interface Summary {
 }
 
 export default function AdminOperationsReview() {
-  const { site: userSite } = useAuth() // might be 'sileko', 'kalagadi', or null for global admin
   const formatSite = (s?: string) => {
     if (!s) return s
     return String(s).split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ')

@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useDb } from '../hooks/useDb'
 import { queryAllSchemas, DEFAULT_MULTI_SCHEMAS } from '../lib/multiSchema'
-import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
 
 interface Machine {
@@ -23,7 +22,7 @@ export default function LiveSite() {
   const [machines, setMachines] = useState<Machine[]>([])
   const [loading, setLoading] = useState(true)
   const isAdmin = role && String(role).toLowerCase() === 'admin'
-  const formatSite = (s?: string) => {
+  const formatSite = (s?: string | null) => {
     if (!s) return s
     return String(s).split(' ').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join(' ')
   }
@@ -33,9 +32,14 @@ export default function LiveSite() {
     try {
       let data: any[] = []
       if (isAdmin) {
-        const all = await queryAllSchemas<any>((client) =>
-          client.from('assets').select('id,asset_code,asset_type,site,location,status,assigned_to').order('asset_code')
-        , DEFAULT_MULTI_SCHEMAS)
+        const all = await queryAllSchemas<any>(
+          async (client) =>
+            client
+              .from('assets')
+              .select('id,asset_code,asset_type,site,location,status,assigned_to')
+              .order('asset_code'),
+          DEFAULT_MULTI_SCHEMAS,
+        )
         data = all
       } else {
         const { data: d, error } = await getDb().from('assets').select('id,asset_code,asset_type,site,location,status,assigned_to').order('asset_code')

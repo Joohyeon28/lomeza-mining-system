@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDb } from '../hooks/useDb'
 import { useAuth } from '../contexts/AuthContext'
@@ -548,7 +548,7 @@ export default function LogDetailModal({
                                   // Check whether this schema exposes the `rejection_reason` column
                                   // by selecting it; if the select fails, skip this schema.
                                   // eslint-disable-next-line no-await-in-loop
-                                  const { data: colCheck, error: colErr } = await client
+                                  const { error: colErr } = await client
                                     .from('production_entries')
                                     .select('rejection_reason')
                                     .eq('id', entry.id)

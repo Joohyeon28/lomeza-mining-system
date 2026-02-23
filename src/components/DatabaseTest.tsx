@@ -10,7 +10,7 @@ export default function DatabaseTest() {
     async function testConnection() {
       try {
         // Try to query a table that actually exists in your schema
-        const { data, error } = await supabase
+        const { error } = await supabase
           .from('users')
           .select('count', { count: 'exact', head: true })
         

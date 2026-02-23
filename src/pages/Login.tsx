@@ -34,9 +34,6 @@ export default function Login() {
     setError(null)
     setSubmitting(true)
     try {
-      if (typeof signIn !== 'function') {
-        throw new Error('Authentication service unavailable. Ensure the app is wrapped with AuthProvider.')
-      }
       const role = await signIn(email, password, selectedSite)
       if (role === 'admin') {
         navigate('/admin-operations-review', { replace: true })
@@ -120,15 +117,33 @@ export default function Login() {
           <div style={{ marginTop: 12 }}>
             <button
               onClick={() => handleSiteSelect(null)}
+              aria-label="Admin login"
               style={{
                 background: 'transparent',
-                border: 'none',
+                border: '1px solid rgba(255,255,255,0.12)',
+                padding: '8px 12px',
                 color: '#ffb300',
-                textDecoration: 'underline',
                 cursor: 'pointer',
                 fontSize: 14,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                borderRadius: 8,
+                fontWeight: 700,
               }}
             >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M12 17a2 2 0 100-4 2 2 0 000 4z" fill="#ffb300" />
+                <path d="M17 8V7a5 5 0 10-10 0v1H5v11h14V8h-2zM9 7a3 3 0 116 0v1H9V7z" fill="#ffb300" />
+              </svg>
               Admin login
             </button>
           </div>

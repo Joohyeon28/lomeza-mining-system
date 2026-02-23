@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useDb } from '../hooks/useDb'
-import { getClientForSchema, supabase } from '../lib/supabaseClient'
+import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
 import LogDetailModal from '../components/LogDetailModal'
 
@@ -193,7 +193,7 @@ export default function SupervisorDashboard() {
           .select('*', { count: 'exact', head: true })
           .in('status', ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'])
 
-        const { count: breakdownEntriesCount, error: breakdownError } = await getDb()
+        const { count: breakdownEntriesCount } = await getDb()
           .from('production_entries')
           .select('*', { count: 'exact', head: true })
           .eq('activity', 'Breakdown')
