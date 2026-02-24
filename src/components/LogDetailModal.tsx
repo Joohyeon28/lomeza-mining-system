@@ -24,7 +24,7 @@ export default function LogDetailModal({
   const [reviewerName, setReviewerName] = useState<string | null>(null)
   const [reporterName, setReporterName] = useState<string | null>(null)
   const [reporterLoading, setReporterLoading] = useState<boolean>(false)
-  const [resolvedAssetCode, setResolvedAssetCode] = useState<string | null>(entry?.assets?.[0]?.asset_code || null)
+  const [resolvedAssetCode, setResolvedAssetCode] = useState<string | null>(entry?.assets?.[0]?.asset_code || entry?.asset_code || null)
   const [freshEntry, setFreshEntry] = useState<any | null>(null)
   const [breakdownReporterName, setBreakdownReporterName] = useState<string | null>(breakdown?.reporter_name || null)
   const [breakdownReporterLoading, setBreakdownReporterLoading] = useState<boolean>(false)
@@ -37,102 +37,38 @@ export default function LogDetailModal({
       try {
         const db = getDb()
         const { data, error } = await db.from('production_entries').select('*').eq('id', entry.id).limit(1)
+        // debug logs removed
         if (!mounted) return
+        let fetched = entry
         if (!error && data && (data as any[]).length) {
-          const fetched = (data as any[])[0]
-          setFreshEntry(fetched)
+          fetched = (data as any[])[0]
+        }
+        setFreshEntry(fetched)
 
-          // try to resolve reviewer name if any reviewer id fields present
-          const reviewerId = fetched.reviewed_by || fetched.rejected_by || fetched.approved_by || fetched.reviewer_id || fetched.reviewed_by_id
-          if (reviewerId) {
-              try {
-                let userRec: any = null
-                try {
-                  const r1 = await getDb().from('users').select('*').eq('id', reviewerId).limit(1)
-                  if (!r1.error && r1.data && r1.data.length) userRec = r1.data[0]
-                } catch (e) {
-                  // ignore
-                }
-                if (!userRec) {
-                  try {
-                    const pub = getClientForSchema('public')
-                    const r2 = await pub.from('users').select('*').eq('id', reviewerId).limit(1)
-                    if (!r2.error && r2.data && r2.data.length) userRec = r2.data[0]
-                  } catch (e) {
-                    // ignore
-                  }
-                }
-                if (!userRec) {
-                  try {
-                    const r3 = await supabase.from('users').select('*').eq('id', reviewerId).limit(1)
-                    if (!r3.error && r3.data && r3.data.length) userRec = r3.data[0]
-                  } catch (e) {
-                    // ignore
-                  }
-                }
-              if (userRec) setReviewerName(userRec.full_name || userRec.display_name || userRec.name || userRec.username || userRec.email || reviewerId)
-            } catch (e) {
-              // ignore
-            }
-          }
-
-          // resolve submitter/reporter for the production entry (if present)
+        // Try to resolve asset code if missing
+        if (!(fetched.assets && fetched.assets.length && fetched.assets[0].asset_code) && fetched.machine_id) {
           try {
-            const submitterId = fetched.submitted_by || fetched.created_by || fetched.reported_by || fetched.submitted_by_id
-            if (submitterId) {
-              let userRec: any = null
+            const selectedSite = site?.toLowerCase() || ''
+            const candidateSchemas = Array.from(new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean))) as string[]
+            for (const schema of candidateSchemas) {
               try {
-                const r1 = await getDb().from('users').select('*').eq('id', submitterId).limit(1)
-                if (!r1.error && r1.data && r1.data.length) userRec = r1.data[0]
+                const client = getClientForSchema(schema)
+                const { data: assets } = await client.from('assets').select('id, asset_code').eq('id', fetched.machine_id).limit(1)
+                if (assets && (assets as any[]).length) {
+                  setResolvedAssetCode((assets as any[])[0].asset_code)
+                  break
+                }
               } catch (e) {
                 // ignore
               }
-              if (!userRec) {
-                try {
-                  const pub = getClientForSchema('public')
-                  const r2 = await pub.from('users').select('*').eq('id', submitterId).limit(1)
-                  if (!r2.error && r2.data && r2.data.length) userRec = r2.data[0]
-                } catch (e) {
-                  // ignore
-                }
-              }
-              if (!userRec) {
-                try {
-                  const r3 = await supabase.from('users').select('*').eq('id', submitterId).limit(1)
-                  if (!r3.error && r3.data && r3.data.length) userRec = r3.data[0]
-                } catch (e) {
-                  // ignore
-                }
-              }
-              if (userRec) setReporterName(userRec.full_name || userRec.display_name || userRec.name || userRec.username || userRec.email || submitterId)
             }
           } catch (e) {
             // ignore
           }
-
-          // if fetched entry lacks embedded asset code, try to resolve it
-          if (!(fetched.assets && fetched.assets.length && fetched.assets[0].asset_code)) {
-            try {
-              const selectedSite = site?.toLowerCase() || ''
-              const candidateSchemas = Array.from(new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean))) as string[]
-              for (const schema of candidateSchemas) {
-                try {
-                  const client = getClientForSchema(schema)
-                  const { data: assets } = await client.from('assets').select('id, asset_code').eq('id', fetched.machine_id).limit(1)
-                  if (assets && (assets as any[]).length) {
-                    setResolvedAssetCode((assets as any[])[0].asset_code)
-                    break
-                  }
-                } catch (e) {
-                  // ignore
-                }
-              }
-            } catch (e) {
-              // ignore
-            }
-          }
-        } else {
-          setFreshEntry(entry)
+        } else if (fetched.assets && fetched.assets.length && fetched.assets[0].asset_code) {
+          setResolvedAssetCode(fetched.assets[0].asset_code)
+        } else if (fetched.asset_code) {
+          setResolvedAssetCode(fetched.asset_code)
         }
       } catch (e) {
         setFreshEntry(entry)
@@ -147,12 +83,35 @@ export default function LogDetailModal({
     let mounted = true
     const tryResolveReporter = async () => {
       try {
-        const id = (freshEntry || entry)?.submitted_by || (freshEntry || entry)?.reported_by || (freshEntry || entry)?.created_by
+        const e = freshEntry || entry
+        let id = e?.submitted_by || e?.reported_by || e?.created_by || e?.submitted_by_id || e?.created_by_id || e?.reported_by_id
+        // Fallback: try to find user from breakdowns if activity is Breakdown
+        if (!id && e?.activity === 'Breakdown' && e?.machine_id && e?.shift_date) {
+          try {
+            const db = getDb()
+            const { data } = await db.from('breakdowns').select('reported_by,reporter,reported_by_id').eq('asset_id', e.machine_id).gte('breakdown_start', `${e.shift_date}T00:00:00`).lte('breakdown_start', `${e.shift_date}T23:59:59.999`).order('breakdown_start', { ascending: false }).limit(1)
+            if (data && data.length) {
+              id = data[0].reported_by || data[0].reporter || data[0].reported_by_id
+            }
+          } catch (e) {}
+        }
+        // Fallback: try to fetch entry again for legacy fields
+        if (!id && e?.id) {
+          try {
+            const db = getDb()
+            const { data } = await db.from('production_entries').select('*').eq('id', e.id).limit(1)
+            if (data && data.length) {
+              id = data[0].submitted_by || data[0].reported_by || data[0].created_by || data[0].submitted_by_id || data[0].created_by_id || data[0].reported_by_id
+            }
+          } catch (e) {}
+        }
         if (!id) return
+        // debug logs removed
         if (reporterName) return
         // Try cache first to avoid any flicker when we've already looked this user up
         const cached = getCachedUser(id)
         if (cached) {
+          // reporter found in cache
           if (mounted) setReporterName(cached.full_name || cached.display_name || cached.name || cached.username || cached.email || id)
           return
         }
@@ -161,6 +120,7 @@ export default function LogDetailModal({
         let userRec: any = null
         try {
           userRec = await fetchAndCacheUser(id, getDb, site ?? undefined)
+        
         } catch (e) {
           // ignore
         }
@@ -197,6 +157,7 @@ export default function LogDetailModal({
 
         const id = breakdown.reported_by || breakdown.reporter || breakdown.reported_by_id
         if (!id) return
+        // reporter lookup id (logging removed)
 
         // Try cache first
         const cached = getCachedUser(id)
@@ -233,9 +194,16 @@ export default function LogDetailModal({
   const formatMaterial = (m?: string | null) => {
     if (!m) return null
     const key = String(m).toUpperCase()
+    // Use 'Manganese' instead of 'Coal' for kalagadi controllers
+    let siteName = site
+    try {
+      if (!siteName && typeof window !== 'undefined') {
+        siteName = localStorage.getItem('site') || ''
+      }
+    } catch (e) {}
     if (key === 'OB') return 'OB (Mining)'
     if (key === 'OB_REHAB' || key === 'OB-REHAB') return 'OB (Rehabilitation)'
-    if (key === 'COAL') return 'Coal'
+    if (key === 'COAL') return (siteName && siteName.toLowerCase() === 'kalagadi') ? 'Manganese' : 'Coal'
     return m
   }
 
@@ -247,9 +215,19 @@ export default function LogDetailModal({
   }
 
   const displayDateTime = (() => {
-    const ts = displayEntry.created_at || displayEntry.inserted_at || displayEntry.submitted_at || displayEntry.logged_at
+    const ts = displayEntry.created_at || displayEntry.inserted_at || displayEntry.submitted_at || displayEntry.logged_at || displayEntry.createdAt
     if (ts) {
       try { return new Date(ts).toLocaleString() } catch (e) { /* fallthrough */ }
+    }
+    // Fallback: try breakdowns for breakdown logs
+    if (displayEntry.activity === 'Breakdown' && displayEntry.machine_id && displayEntry.shift_date) {
+      try {
+        // This is a synchronous fallback, so only works if breakdownDetails is passed as prop
+        if (breakdown && (breakdown.breakdown_start || breakdown.created_at)) {
+          const bts = breakdown.breakdown_start || breakdown.created_at
+          return new Date(bts).toLocaleString()
+        }
+      } catch (e) { /* fallthrough */ }
     }
     // fallback to shift_date + hour
     return `${displayEntry.shift_date} · Hour ${displayEntry.hour}:00`

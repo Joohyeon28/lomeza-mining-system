@@ -36,10 +36,11 @@ export default function Layout({ children, activePage }: LayoutProps) {
       const livePath = '/live-site'
       return [
         { path: '/dashboard', label: 'Dashboard' },
-        { path: livePath, label: 'Live Site' },
+        { path: '/admin-operations-review', label: 'Admin Operations Review' },
         { path: '/supervisor-review', label: 'Supervisor Review' },
         { path: '/workshop', label: 'Workshop' },
-        { path: '/exceptions', label: 'Exceptions' }
+        { path: '/exceptions', label: 'Exceptions' },
+        { path: livePath, label: 'Live Site' }
       ]
     }
 
@@ -47,9 +48,9 @@ export default function Layout({ children, activePage }: LayoutProps) {
       const livePath = '/supervisor-live-site'
       return [
         { path: '/dashboard', label: 'Dashboard' },
-        { path: livePath, label: 'Live Site' },
         { path: '/supervisor-review', label: 'Supervisor Review' },
-        { path: '/exceptions', label: 'Exceptions' }
+        { path: '/exceptions', label: 'Exceptions' },
+        { path: livePath, label: 'Live Site' }
       ]
     }
 

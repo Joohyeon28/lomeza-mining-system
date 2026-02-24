@@ -76,16 +76,14 @@ export default function Workshop() {
     try {
       // Always fetch workshop.assets first
       const workshopRes = await workshopDb.from('assets').select('*')
-      console.log('[DEBUG] Raw workshopDb.from(\'assets\').select(\'*\') response:', workshopRes)
+      // debug log removed
       if (workshopRes.error) {
         console.error('Error fetching workshop.assets:', workshopRes.error)
       }
       if (!workshopRes.data || !Array.isArray(workshopRes.data)) {
-        console.warn('[DEBUG] workshopRes.data is not an array:', workshopRes.data)
+        console.warn('workshopRes.data is not an array:', workshopRes.data)
       } else if (workshopRes.data.length === 0) {
-        console.warn('[DEBUG] workshopRes.data is an empty array')
-      } else {
-        console.log('[DEBUG] workshopRes.data sample:', workshopRes.data[0])
+        console.warn('workshopRes.data is an empty array')
       }
       const workshopAssets = (workshopRes.data ?? []).map((a: any) => ({
         id: a.id,
@@ -305,7 +303,7 @@ export default function Workshop() {
                 <th style={{ padding: '12px 16px' }}>Type</th>
                 <th style={{ padding: '12px 16px' }}>Site</th>
                 <th style={{ padding: '12px 16px' }}>Location</th>
-                <th style={{ padding: '12px 16px' }}>Assigned</th>
+
                 <th style={{ padding: '12px 16px' }}>Machine Role</th>
                 <th style={{ padding: '12px 16px' }}>Operational Status</th>
                 <th style={{ padding: '12px 16px' }}>Status</th>
@@ -319,7 +317,7 @@ export default function Workshop() {
                   <td style={{ padding: '12px 16px' }}>{asset.asset_type}</td>
                   <td style={{ padding: '12px 16px' }}>{formatSite(asset.site)}</td>
                   <td style={{ padding: '12px 16px' }}>{asset.location || '—'}</td>
-                  <td style={{ padding: '12px 16px' }}>{asset.assigned_to || '—'}</td>
+
                   <td style={{ padding: '12px 16px' }}>{formatCapitalize(asset.machine_role)}</td>
                   <td style={{ padding: '12px 16px' }}>{formatCapitalize(asset.operational_status)}</td>
                   <td style={{ padding: '12px 16px' }}>

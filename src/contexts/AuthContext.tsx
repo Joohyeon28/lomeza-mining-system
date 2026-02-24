@@ -28,13 +28,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 }
 
   useEffect(() => {
+    let mounted = true
+    let authInitialized = false
+
     ;(async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession()
+        // removed debug logging
         if (session && session.user) {
+          // restored session silently
           setUser(session.user)
           await fetchUserDetails(session.user.id)
-          setLoading(false)
+          // don't setLoading(false) here — wait for auth state event to avoid
+          // a race where the component redirects before onAuthStateChange fires
           return
         }
 
@@ -47,14 +53,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           try {
             const saved = JSON.parse(raw)
             // saved should contain an object with access_token and refresh_token
-            if (saved?.access_token && saved?.refresh_token) {
+              if (saved?.access_token && saved?.refresh_token) {
               const { data: restored, error: restoreErr } = await supabase.auth.setSession({
                 access_token: saved.access_token,
                 refresh_token: saved.refresh_token,
               })
+              // supabase.setSession result handled silently
               if (!restoreErr && restored?.session?.user) {
                 setUser(restored.session.user)
                 await fetchUserDetails(restored.session.user.id)
+                // still wait for auth event
+                return
               }
             }
           } catch (e) {
@@ -63,12 +72,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         }
       } catch (e) {
         console.warn('Failed to read auth session on startup', e)
-      } finally {
-        setLoading(false)
       }
+      // Do not set loading false here — wait for onAuthStateChange or timeout
     })()
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      // auth state changes handled without debug logging
+      authInitialized = true
       setUser(session?.user ?? null)
       if (session?.user) fetchUserDetails(session.user.id)
       else {
@@ -80,30 +90,20 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           // ignore
         }
       }
+      if (mounted) setLoading(false)
     })
 
-    // Clear stored session on page unload/close so localStorage isn't reused
-    // across browser sessions. Use both pagehide and beforeunload for
-    // broader compatibility (pagehide fires for bfcache navigation).
-    const clearSessionOnUnload = () => {
-      try {
-        localStorage.removeItem('lomeza:session')
-      } catch (e) {
-        // ignore storage errors
+    // Safety timeout: if no auth event arrives within 2s, stop loading to avoid indefinite block
+    const t = setTimeout(() => {
+      if (!authInitialized && mounted) {
+        setLoading(false)
       }
-    }
-
-    if (typeof window !== 'undefined') {
-      window.addEventListener('pagehide', clearSessionOnUnload)
-      window.addEventListener('beforeunload', clearSessionOnUnload)
-    }
+    }, 2000)
 
     return () => {
+      mounted = false
       listener?.subscription.unsubscribe()
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('pagehide', clearSessionOnUnload)
-        window.removeEventListener('beforeunload', clearSessionOnUnload)
-      }
+      clearTimeout(t)
     }
   }, [])
 
@@ -121,6 +121,24 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       // Try common name fields from the profile row
       const name = data.full_name || data.name || (data.first_name ? `${data.first_name}${data.last_name ? ' ' + data.last_name : ''}` : null) || null
       setDisplayName(name)
+      // profile fetched
+      return
+    }
+
+    // If we couldn't read from public.users (RLS may block), fall back to auth user metadata
+    try {
+      const { data: currentUser } = await supabase.auth.getUser()
+      if (currentUser) {
+        const roleFromMeta = (currentUser.user_metadata && (currentUser.user_metadata as any).role) || (currentUser.app_metadata && (currentUser.app_metadata as any).role)
+        const siteFromMeta = (currentUser.user_metadata && (currentUser.user_metadata as any).site) || (currentUser.app_metadata && (currentUser.app_metadata as any).site)
+        if (roleFromMeta) setRole(typeof roleFromMeta === 'string' ? roleFromMeta.toLowerCase() : roleFromMeta)
+        if (siteFromMeta) setSite(typeof siteFromMeta === 'string' ? siteFromMeta.toLowerCase() : siteFromMeta)
+        const name = (currentUser.user_metadata && ((currentUser.user_metadata as any).full_name || (currentUser.user_metadata as any).name)) || currentUser.email || null
+        if (name) setDisplayName(name)
+        // profile fetched from auth metadata
+      }
+    } catch (e) {
+      // ignore fallback errors
     }
   }
 
@@ -159,6 +177,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     } else {
       if (selected !== userSite) {
         await supabase.auth.signOut()
+        if (selected === null) {
+          // User tried to sign in to the ADMIN (all sites) option but is tied to a specific site
+          throw new Error('You are not registered as an admin.')
+        }
         throw new Error(`You are not registered under ${selectedSite}.`)
       }
     }

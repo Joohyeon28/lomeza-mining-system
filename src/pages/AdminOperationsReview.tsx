@@ -1,6 +1,16 @@
+  function displayMaterial(material: string) {
+    if (material === 'OB (Rehabilitation)' || material === 'OB (Mining)' || material === 'Coal' || material === 'Manganese') return material;
+    if (material === 'OB_REHAB') return 'OB (Rehabilitation)';
+    if (material === 'OB') return 'OB (Mining)';
+    if (material === 'COAL') return 'Coal';
+    return material;
+  }
 import { useEffect, useState } from 'react'
 import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
+import LogDetailModal from '../components/LogDetailModal'
+import { useEffect as useReactEffect } from 'react'
+import { getClientForSchema as getSchemaClient } from '../lib/supabaseClient'
 
 interface ProductionEntry {
   id: string
@@ -43,7 +53,41 @@ export default function AdminOperationsReview() {
     rejected: 0,
   })
 
-  // Helper to fetch from a specific schema
+  // Log detail modal state
+  const [viewEntry, setViewEntry] = useState<ProductionEntry | null>(null)
+  const [breakdownDetails, setBreakdownDetails] = useState<any | null>(null)
+
+  // Fetch breakdown details if viewing a breakdown entry
+  useReactEffect(() => {
+    const fetchBreakdown = async () => {
+      if (viewEntry && viewEntry.activity === 'Breakdown') {
+        try {
+          const db = viewEntry.site ? getSchemaClient(viewEntry.site.toLowerCase()) : getSchemaClient('public')
+          const { data, error } = await db.from('breakdowns').select('*').eq('asset_id', viewEntry.machine_id).gte('breakdown_start', `${viewEntry.shift_date}T00:00:00`).lte('breakdown_start', `${viewEntry.shift_date}T23:59:59.999`).order('breakdown_start', { ascending: false }).limit(1)
+          if (!error && data && data.length) {
+            setBreakdownDetails(data[0])
+          } else {
+            setBreakdownDetails(null)
+          }
+        } catch (err) {
+          setBreakdownDetails(null)
+        }
+      } else {
+        setBreakdownDetails(null)
+      }
+    }
+    fetchBreakdown()
+  }, [viewEntry])
+
+  useEffect(() => {
+    // console.debug('AdminOperationsReview mounted');
+  }, []);
+
+  useEffect(() => {
+    // console.debug('Entries updated:', entries);
+  }, [entries]);
+
+  // Only query sileko and kalagadi schemas for production_entries
   const fetchFromSchema = async (schema: string, date: string): Promise<ProductionEntry[]> => {
     const client = getClientForSchema(schema)
     const { data, error } = await client
@@ -53,12 +97,12 @@ export default function AdminOperationsReview() {
         shift_date,
         hour,
         machine_id,
-        assets ( asset_code ),
         activity,
         material_type,
         number_of_loads,
         haul_distance,
-        status
+        status,
+        assets(asset_code)
       `)
       .eq('shift_date', date)
 
@@ -66,17 +110,23 @@ export default function AdminOperationsReview() {
       console.error(`Error fetching from ${schema}:`, error)
       return []
     }
+    // console.debug(`Fetched from ${schema}:`, data)
     return (data || []).map((item: any) => ({
       ...item,
-      asset_code: item.assets?.asset_code || item.machine_id,
+      asset_code: item.assets?.asset_code || item.asset_code || '',
+      machine_id: item.machine_id || '',
       site: schema === 'sileko' ? 'Sileko' : 'Kalagadi',
+      submitted_by: item.submitted_by || '',
+      created_at: item.created_at || '',
     }))
   }
 
   const loadProduction = async () => {
+    // console.debug('Calling loadProduction', { selectedDate, siteFilter });
     setLoading(true)
     try {
       let siteEntries: ProductionEntry[] = []
+      // Only query sileko and kalagadi schemas for production_entries
       if (siteFilter === 'all' || siteFilter === 'sileko') {
         const sileko = await fetchFromSchema('sileko', selectedDate)
         siteEntries = [...siteEntries, ...sileko]
@@ -88,6 +138,7 @@ export default function AdminOperationsReview() {
 
       // Sort by hour and site
       siteEntries.sort((a, b) => a.hour - b.hour)
+      // console.debug('Combined siteEntries:', siteEntries)
       setEntries(siteEntries)
 
       // Calculate summary
@@ -239,12 +290,12 @@ export default function AdminOperationsReview() {
               </thead>
               <tbody>
                 {entries.map((entry) => (
-                  <tr key={`${entry.site}-${entry.id}`}>
+                  <tr key={`${entry.site}-${entry.id}`} style={{ cursor: 'pointer' }} onClick={() => setViewEntry(entry)}>
                     <td>{formatSite(entry.site)}</td>
-                    <td className="machine-id">{entry.asset_code}</td>
+                    <td className="machine-id">{entry.asset_code ? entry.asset_code : entry.machine_id}</td>
                     <td>{entry.hour}:00</td>
                     <td>{entry.activity}</td>
-                    <td>{entry.material_type}</td>
+                    <td>{displayMaterial(entry.material_type)}</td>
                     <td>{entry.number_of_loads}</td>
                     <td>{entry.haul_distance}</td>
                     <td>
@@ -254,7 +305,7 @@ export default function AdminOperationsReview() {
                     </td>
                     <td>
                       {entry.status === 'PENDING' && (
-                        <div className="action-buttons">
+                        <div className="action-buttons" onClick={e => e.stopPropagation()}>
                           <button
                             className="approve-btn"
                             onClick={() => updateStatus(entry.id, 'APPROVED', entry.site)}
@@ -278,6 +329,11 @@ export default function AdminOperationsReview() {
             </table>
           )}
         </section>
+
+        {/* Log Detail Modal (must be outside table/tbody) */}
+        {viewEntry && (
+          <LogDetailModal entry={viewEntry} breakdown={breakdownDetails} onClose={() => setViewEntry(null)} />
+        )}
 
         {summary.pending > 0 && (
           <div className="action-bar">

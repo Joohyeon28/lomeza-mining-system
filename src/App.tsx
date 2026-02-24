@@ -22,17 +22,33 @@ import HourlyLogging from './pages/HourlyLogging.tsx'
 import { useEffect } from 'react'
 
 function App() {
-  // Clear localStorage on browser close/tab exit globally
+  // Keep localStorage intact across reloads; session persistence handled by AuthContext/supabase
   useEffect(() => {
-    const clearStorage = () => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       try {
-        localStorage.clear()
+        let navType: string | undefined
+        try {
+          const nav = performance.getEntriesByType('navigation')?.[0] as any
+          navType = nav?.type
+        } catch (err) {
+          // ignore
+        }
+        // performance.navigation.type === 1 is reload in older browsers
+        const perfNav = (performance as any).navigation?.type
+        const isReload = navType === 'reload' || perfNav === 1
+        if (!isReload) {
+          try {
+            localStorage.removeItem('lomeza:session')
+          } catch (e) {
+            // ignore
+          }
+        }
       } catch (e) {
         // ignore
       }
     }
-    window.addEventListener('unload', clearStorage)
-    return () => window.removeEventListener('unload', clearStorage)
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [])
 
   function RoleRedirect() {

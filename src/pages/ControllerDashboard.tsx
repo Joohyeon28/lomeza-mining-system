@@ -422,7 +422,7 @@ export default function ControllerDashboard() {
 
       // Debug fetched entry + breakdown for troubleshooting
       // eslint-disable-next-line no-console
-      console.debug('Controller view entry', entry, 'breakdownCandidate', data && (data as any[])[0], 'error', error)
+      // Controller view entry debug removed
 
       setViewEntry(entry)
       // If no breakdown found in the day-range, try a fallback to the latest breakdown for this asset

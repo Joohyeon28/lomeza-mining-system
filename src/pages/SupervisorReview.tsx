@@ -1,9 +1,19 @@
 import { useState } from 'react'
+
+function displayMaterial(material: string) {
+  if (material === 'OB (Rehabilitation)' || material === 'OB (Mining)' || material === 'Coal' || material === 'Manganese') return material;
+  if (material === 'OB_REHAB') return 'OB (Rehabilitation)';
+  if (material === 'OB') return 'OB (Mining)';
+  if (material === 'COAL') return 'Coal';
+  return material;
+}
 import { useDb } from '../hooks/useDb'
 import { useAuth } from '../contexts/AuthContext'
 import { queryAllSchemas, DEFAULT_MULTI_SCHEMAS } from '../lib/multiSchema'
 import { getClientForSchema } from '../lib/supabaseClient'
 import Layout from '../components/Layout'
+import LogDetailModal from '../components/LogDetailModal'
+import { useEffect as useReactEffect } from 'react'
 
 interface ProductionEntry {
   id: string
@@ -50,30 +60,77 @@ export default function SupervisorReview() {
     rejected: 0,
   })
 
+  // Log detail modal state
+  const [viewEntry, setViewEntry] = useState<ProductionEntry | null>(null)
+  const [breakdownDetails, setBreakdownDetails] = useState<any | null>(null)
+
+  // Fetch breakdown details if viewing a breakdown entry
+  useReactEffect(() => {
+    const fetchBreakdown = async () => {
+      if (viewEntry && viewEntry.activity === 'Breakdown') {
+        try {
+          const db = isAdmin && viewEntry._schema ? getClientForSchema(viewEntry._schema) : getDb()
+          const { data, error } = await db.from('breakdowns').select('*').eq('asset_id', viewEntry.machine_id).gte('breakdown_start', `${viewEntry.shift_date}T00:00:00`).lte('breakdown_start', `${viewEntry.shift_date}T23:59:59.999`).order('breakdown_start', { ascending: false }).limit(1)
+          if (!error && data && data.length) {
+            setBreakdownDetails(data[0])
+          } else {
+            setBreakdownDetails(null)
+          }
+        } catch (err) {
+          setBreakdownDetails(null)
+        }
+      } else {
+        setBreakdownDetails(null)
+      }
+    }
+    fetchBreakdown()
+  }, [viewEntry])
+
   const loadProduction = async () => {
     setLoading(true)
     try {
       let data: any[] = []
       if (isAdmin) {
+        // ...existing code...
+        // Only query sileko and kalagadi schemas for production_entries
+        const SCHEMAS = ['sileko', 'kalagadi']
         if (siteFilter === 'all') {
-          const all = await queryAllSchemas<any>(async (client) =>
-            await client
-              .from('production_entries')
-              .select(`id,shift_date,hour,shift,machine_id,assets ( asset_code ),activity,material_type,number_of_loads,haul_distance,status`)
-              .eq('shift_date', selectedDate)
-              .order('hour')
-          , DEFAULT_MULTI_SCHEMAS)
+          let all: any[] = []
+          for (const schema of SCHEMAS) {
+            // ...existing code...
+            try {
+              const client = getClientForSchema(schema)
+              const res = await client
+                .from('production_entries')
+                .select(`id,shift_date,hour,shift,machine_id,activity,material_type,number_of_loads,haul_distance,status,assets(asset_code)`)
+                .eq('shift_date', selectedDate)
+                .order('hour')
+              if (res.error) {
+                console.error(`Error fetching from ${schema}:`, res.error)
+                continue
+              }
+              // ...existing code...
+              all = [...all, ...(res.data || []).map((d: any) => ({ ...d, _schema: schema }))]
+            } catch (err) {
+              console.error(`Exception fetching from ${schema}:`, err)
+            }
+          }
           data = all
         } else {
-          const schema = siteFilter
+          const schema = SCHEMAS.includes(siteFilter) ? siteFilter : SCHEMAS[0]
           const client = getClientForSchema(schema)
           const res = await client
             .from('production_entries')
-            .select(`id,shift_date,hour,shift,machine_id,assets ( asset_code ),activity,material_type,number_of_loads,haul_distance,status`)
+            .select(`id,shift_date,hour,shift,machine_id,activity,material_type,number_of_loads,haul_distance,status,assets(asset_code)`)
             .eq('shift_date', selectedDate)
             .order('hour')
-          if (res.error) throw res.error
-          data = (res.data || []).map((d: any) => ({ ...d, _schema: schema }))
+          if (res.error) {
+            console.error(`Error fetching from ${schema}:`, res.error)
+            data = []
+          } else {
+            // ...existing code...
+            data = (res.data || []).map((d: any) => ({ ...d, _schema: schema }))
+          }
         }
       } else {
         const { data: _data, error } = await getDb()
@@ -87,10 +144,15 @@ export default function SupervisorReview() {
         data = _data || []
       }
 
+      // ...existing code...
       const formatted = (data || []).map((item: any) => ({
         ...item,
-        asset_code: item.assets?.asset_code || item.machine_id,
+        asset_code: item.assets?.asset_code || item.asset_code || '',
+        machine_id: item.machine_id || '',
+        submitted_by: item.submitted_by || '',
+        created_at: item.created_at || '',
       }))
+      // ...existing code...
 
       setEntries(formatted)
 
@@ -243,12 +305,12 @@ export default function SupervisorReview() {
               </thead>
               <tbody>
                 {entries.map((entry) => (
-                  <tr key={entry.id}>
+                  <tr key={entry.id} style={{ cursor: 'pointer' }} onClick={() => setViewEntry(entry)}>
                     {isAdmin && <td>{formatSite(entry._schema)}</td>}
-                    <td>{entry.asset_code}</td>
+                    <td>{entry.asset_code ? entry.asset_code : entry.machine_id}</td>
                     <td>{entry.hour}:00</td>
                     <td>{entry.activity}</td>
-                    <td>{entry.material_type}</td>
+                    <td>{displayMaterial(entry.material_type)}</td>
                     <td>{entry.number_of_loads}</td>
                     <td>{entry.haul_distance}</td>
                     <td>
@@ -258,7 +320,7 @@ export default function SupervisorReview() {
                     </td>
                     <td>
                       {entry.status === 'PENDING' && (
-                        <div className="action-buttons">
+                        <div className="action-buttons" onClick={e => e.stopPropagation()}>
                           <button
                             className="approve-btn"
                             onClick={() => updateStatus(entry.id, 'APPROVED')}
@@ -282,6 +344,11 @@ export default function SupervisorReview() {
             </table>
           )}
         </section>
+
+        {/* Log Detail Modal (must be outside table/tbody) */}
+        {viewEntry && (
+          <LogDetailModal entry={viewEntry} breakdown={breakdownDetails} onClose={() => setViewEntry(null)} />
+        )}
 
         {summary.pending > 0 && (
           <div className="action-bar">

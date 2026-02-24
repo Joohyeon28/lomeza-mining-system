@@ -46,13 +46,14 @@ export default function Exceptions() {
         }, DEFAULT_MULTI_SCHEMAS)
         exData = exAll
 
+        // Fetch breakdowns from both site schemas explicitly (sileko, kalagadi)
         const bdAll = await queryAllSchemas<any>(async (client) => {
           const res = await client
             .from('breakdowns')
             .select(`id,reason,status,site,breakdown_start,reported_by,acknowledged,acknowledged_by,acknowledged_at,assets ( asset_code )`)
             .order('breakdown_start', { ascending: false })
           return { data: res.data, error: res.error }
-        }, DEFAULT_MULTI_SCHEMAS)
+        }, ['sileko', 'kalagadi'])
         bdData = bdAll
       } else {
         // site-scoped fetch

@@ -1,3 +1,16 @@
+// Map material_type to display value for DB insert, site-aware
+function getMaterialDisplay(material: string, site?: string | null) {
+  switch (material) {
+    case 'OB_REHAB':
+      return 'OB (Rehabilitation)';
+    case 'OB':
+      return 'OB (Mining)';
+    case 'COAL':
+      return site?.toLowerCase() === 'kalagadi' ? 'Manganese' : 'Coal';
+    default:
+      return material;
+  }
+}
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
@@ -269,7 +282,7 @@ export default function ProductionInput() {
         // 1) Try matching by `machine_role` (preferred)
         for (const schema of candidateSchemas) {
           try {
-            console.info('Trying registry schema (machine_role):', schema)
+            // debug: registry schema (machine_role) check removed
             const registryClient = getClientForSchema(schema)
             const { data, error } = await registryClient
               .from('assets')
@@ -277,14 +290,13 @@ export default function ProductionInput() {
               .in('machine_role', types)
               .eq('status', 'ACTIVE')
 
-            if (error) {
-              console.warn(`No assets in schema ${schema} by machine_role (or error):`, error)
-              continue
-            }
+                if (error) {
+                  console.warn(`No assets in schema ${schema} by machine_role (or error):`, error)
+                  continue
+                }
 
             if (data && (data as any[]).length > 0) {
               found = data as any[]
-              console.info(`Found ${found.length} assets in schema ${schema} by machine_role`)
               break
             }
           } catch (err) {
@@ -296,7 +308,7 @@ export default function ProductionInput() {
         if (!found) {
           for (const schema of candidateSchemas) {
             try {
-              console.info('Trying registry schema (asset_type):', schema)
+              // debug: registry schema (asset_type) check removed
               const registryClient = getClientForSchema(schema)
               const { data, error } = await registryClient
                 .from('assets')
@@ -311,7 +323,6 @@ export default function ProductionInput() {
 
               if (data && (data as any[]).length > 0) {
                 found = data as any[]
-                console.info(`Found ${found.length} assets in schema ${schema} by asset_type`)
                 break
               }
             } catch (err) {
@@ -327,7 +338,7 @@ export default function ProductionInput() {
               const registryClient = getClientForSchema(schema)
               for (const t of types) {
                 try {
-                  console.info(`Trying ilike on schema ${schema} for type '${t}'`)
+                  // debug: ilike attempt removed
                   const pattern = `%${t.toLowerCase()}%`
                   const { data, error } = await registryClient
                     .from('assets')
@@ -342,7 +353,6 @@ export default function ProductionInput() {
 
                   if (data && (data as any[]).length > 0) {
                     found = data as any[]
-                    console.info(`Found ${found.length} assets in schema ${schema} by ilike '${t}'`)
                     break
                   }
                 } catch (err) {
@@ -361,10 +371,10 @@ export default function ProductionInput() {
             found.map(d => ({ ...d, id: String(d.id) })) as Machine[]
           )
         } else {
-          console.info('No registry assets found in any candidate schema')
+          // no registry assets found
           setAvailableMachines([])
 
-          // For debugging: fetch a small sample from each candidate schema
+          // fetch a small sample from each candidate schema (debug helper)
           const samples: { schema: string; rows: any[] }[] = []
           for (const schema of candidateSchemas) {
             try {
@@ -383,7 +393,6 @@ export default function ProductionInput() {
           setRegistrySamples(samples)
         }
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.error('Unexpected error fetching assets', err)
         setAvailableMachines([])
       } finally {
@@ -426,8 +435,7 @@ export default function ProductionInput() {
         const anchorDate = anchor?.anchorDate || new Date()
         const anchorGroup = (anchor?.anchorGroup || 'A') as Group
         const rotation = getRotationForDate(now, anchorDate, anchorGroup)
-        // eslint-disable-next-line no-console
-        console.info('Shift rotation for today (anchor):', rotation)
+        // Shift rotation computed (logging removed)
       } catch (e) {
         // ignore rotation errors — we still prefer to set shift kind from time
       }
@@ -437,11 +445,7 @@ export default function ProductionInput() {
       try {
         // DEBUG: log site and inspect raw response to diagnose empty result
         // Remove these logs after debugging.
-        // eslint-disable-next-line no-console
-        console.debug('Debug: reading shift_definitions for site', site)
         const { data: defs, error: defsError, status, statusText } = await db.from('shift_definitions').select('code')
-        // eslint-disable-next-line no-console
-        console.debug('Debug: shift_definitions response', { defs, defsError, status, statusText })
         if (defs && (defs as any[]).length > 0) {
           // look for the desired kind first, falling back to first available
           const found = (defs as any[]).find(d => (d.code || '').toLowerCase() === (desiredKind || '').toLowerCase())
@@ -478,8 +482,7 @@ export default function ProductionInput() {
 
         if (existing && (existing as any[]).length > 0) {
           plan = (existing as any[])[0]
-          // eslint-disable-next-line no-console
-          console.info('Reusing existing daily_plans row', plan.id)
+          // reusing existing daily_plans row
         } else {
           const { data: inserted, error: insertError } = await db
             .from('daily_plans')
@@ -534,7 +537,7 @@ export default function ProductionInput() {
           assignmentsToInsert.push({
             daily_plan_id: plan.id,
             machine_id: mId,
-            material_type: material,
+            material_type: getMaterialDisplay(material, site),
             haul_distance: distance ?? null,
           })
         }
@@ -952,7 +955,7 @@ function MaterialAssignmentStep({
               <h3>
                 {material === 'OB' && 'OB (Mining)'}
                 {material === 'OB_REHAB' && 'OB (Rehabilitation)'}
-                {material === 'COAL' && 'Coal'}
+                {material === 'COAL' && (isKalagadiController ? 'Manganese' : 'Coal')}
               </h3>
               <div className="machine-list">
                 {getVisibleMachines(material).map(machine => (

@@ -31,6 +31,7 @@ export default function HourlyLogging() {
   const planId = (location.state as any)?.planId ?? persistedPlanId
   const { user, site } = useAuth()
   const getDb = useDb()
+  const isKalagadi = (site?.toLowerCase() === 'kalagadi')
   const [machines, setMachines] = useState<Machine[]>([])
   const [loadingPlan, setLoadingPlan] = useState(false)
   const [now, setNow] = useState<Date>(new Date())
@@ -44,6 +45,17 @@ export default function HourlyLogging() {
   const [viewEntry, setViewEntry] = useState<any | null>(null)
   const [viewBreakdown, setViewBreakdown] = useState<any | null>(null)
   const [showEndShiftConfirm, setShowEndShiftConfirm] = useState(false)
+
+  // Normalize material_type values (stored as display strings like "OB (Mining)")
+  // to the canonical codes used for grouping: 'OB', 'OB_REHAB', 'COAL'.
+  const normalizeMaterial = (m?: string | null) => {
+    if (!m) return ''
+    const s = String(m).toLowerCase()
+    if (s.includes('rehab')) return 'OB_REHAB'
+    if (s.startsWith('ob')) return 'OB'
+    if (s.includes('manganese') || s.includes('coal')) return 'COAL'
+    return m
+  }
 
   // Fetch machines for this site
   useEffect(() => {
@@ -68,9 +80,7 @@ export default function HourlyLogging() {
             `)
             .eq('daily_plan_id', planId)
 
-          // debug
-          // eslint-disable-next-line no-console
-          console.debug('daily_plan_machines (with assets) response', { data, error, status, statusText })
+          // debug info removed
 
           if (error) throw error
 
@@ -103,6 +113,60 @@ export default function HourlyLogging() {
           console.warn('Failed to fetch daily_plan_machines with embedded assets, falling back to simple select', err)
         }
 
+        // Secondary fallback: if the plan's machines weren't found in the current
+        // site schema, try querying a set of candidate schemas (public, sileko, kalagadi, workshop).
+        // This helps when the plan was created under a different schema than the
+        // current user's `site` (e.g., admin-created plan).
+        try {
+          const selectedSite = site?.toLowerCase() || ''
+          const candidateSchemas = Array.from(new Set([selectedSite, 'public', 'sileko', 'kalagadi', 'workshop'].filter(Boolean))) as string[]
+          for (const schema of candidateSchemas) {
+            // skip the site we already queried (db refers to that)
+            if (schema === selectedSite) continue
+            try {
+              const client = getClientForSchema(schema)
+              const { data: otherData, error: otherErr } = await client
+                .from('daily_plan_machines')
+                .select(`
+                  machine_id,
+                  material_type,
+                  haul_distance,
+                  assets ( id, asset_code, asset_type, machine_role )
+                `)
+                .eq('daily_plan_id', planId)
+
+              if (!otherErr && otherData && (otherData as any[]).length > 0) {
+                const machinesFromPlan = (otherData as any[])
+                  .map(r => ({
+                    id: r.assets?.id,
+                    asset_code: r.assets?.asset_code,
+                    asset_type: r.assets?.asset_type,
+                    machine_role: r.assets?.machine_role,
+                    material_type: r.material_type,
+                    haul_distance: r.haul_distance,
+                  }))
+                  .filter(m => m.id)
+
+                const seen = new Set<string>()
+                const unique: any[] = []
+                for (const m of machinesFromPlan) {
+                  const mid = String(m.id)
+                  if (!seen.has(mid)) {
+                    seen.add(mid)
+                    unique.push(m)
+                  }
+                }
+                setMachines(unique)
+                return
+              }
+            } catch (e) {
+              // ignore per-schema errors and continue
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
         // Fallback: fetch only machine assignments (no join/embedding) then fetch asset details
         try {
           const { data: simpleData, error: simpleError, status, statusText } = await db
@@ -110,8 +174,7 @@ export default function HourlyLogging() {
             .select('machine_id, material_type, haul_distance')
             .eq('daily_plan_id', planId)
 
-          // eslint-disable-next-line no-console
-          console.debug('daily_plan_machines (simple) response', { simpleData, simpleError, status, statusText })
+          // debug info removed
 
           if (simpleError) throw simpleError
           if (simpleData && (simpleData as any[]).length > 0) {
@@ -218,8 +281,7 @@ export default function HourlyLogging() {
           .eq('shift_date', today)
 
         if (!error && data && (data as any[]).length > 0) {
-          // eslint-disable-next-line no-console
-          console.debug('fetchTodayLogs: primary result', { count: (data as any[]).length, sample: (data as any[]).slice(0,3) })
+            // fetchTodayLogs primary result (logging removed)
           setLoggedHours(
             (data as any[]).map(e => ({
               machine_id: e.machine_id,
@@ -245,8 +307,7 @@ export default function HourlyLogging() {
           .in('machine_id', ids)
           .eq('shift_date', today)
 
-        // eslint-disable-next-line no-console
-        console.debug('fetchTodayLogs: fallback query', { idsCount: ids.length, fallbackCount: fallbackData ? (fallbackData as any[]).length : 0, fallbackError })
+        // fetchTodayLogs fallback query (logging removed)
 
         if (!fallbackError && fallbackData) {
           setLoggedHours(
@@ -280,8 +341,7 @@ export default function HourlyLogging() {
   
 
   const handleHourClick = (machine: Machine, hour: number) => {
-    // eslint-disable-next-line no-console
-    console.debug('hour clicked', { machineId: machine.id, hour, logged: isHourLogged(machine.id, hour) })
+    // hour clicked (logging removed)
     if (isHourLogged(machine.id, hour)) {
       // show details for already-logged hour
       handleViewLoggedHour(machine, hour)
@@ -297,8 +357,7 @@ export default function HourlyLogging() {
     const shift_date = new Date().toISOString().split('T')[0]
     let bdCandidate: any = null
     try {
-      // eslint-disable-next-line no-console
-      console.debug('handleViewLoggedHour: loading production entry', { machineId: machine.id, hour, shift_date })
+      // handleViewLoggedHour: loading production entry (logging removed)
       const { data, error } = await db
         .from('production_entries')
         .select('*')
@@ -418,7 +477,7 @@ export default function HourlyLogging() {
 
       // Debug fetched entry + breakdown for troubleshooting
       // eslint-disable-next-line no-console
-      console.debug('View entry loaded', entry, 'breakdownCandidate', bdCandidate)
+      // View entry loaded (debug removed)
 
       setShowViewModal(true)
     } catch (err) {
@@ -448,15 +507,31 @@ export default function HourlyLogging() {
     }
     const db = getDb()
     try {
-      // Use upsert to avoid duplicate-key errors and allow updating existing hour entries
-      const { error } = await db
-        .from('production_entries')
-        .upsert([newEntry], { onConflict: 'machine_id,shift_date,hour' })
+        // Use upsert to avoid duplicate-key errors and allow updating existing hour entries
+        const { error } = await db
+          .from('production_entries')
+          .upsert([newEntry], { onConflict: 'machine_id,shift_date,hour' })
 
-      if (error) {
-        alert('Failed to save: ' + error.message)
-        return
-      }
+        if (error) {
+          // If the error is a FK violation on submitted_by (user row missing
+          // in this schema), retry without submitted_by so the entry can be
+          // recorded. This mirrors the breakdown fallback logic.
+          const msg = String(error.message || '')
+          if (msg.includes('production_entries_submitted_by_fkey')) {
+            const fallback = { ...newEntry }
+            delete fallback.submitted_by
+            const { error: fbErr } = await db
+              .from('production_entries')
+              .upsert([fallback], { onConflict: 'machine_id,shift_date,hour' })
+            if (fbErr) {
+              alert('Failed to save: ' + fbErr.message)
+              return
+            }
+          } else {
+            alert('Failed to save: ' + msg)
+            return
+          }
+        }
 
       // Replace any existing logged hour for this machine/hour with the returned/created entry
       setLoggedHours(prev => {
@@ -489,12 +564,29 @@ export default function HourlyLogging() {
       breakdown_start: startTime,
     }
     if (operator) payload.operator = operator
-    const { error } = await db.from('breakdowns').insert(payload)
-    if (error) {
-      alert('Failed to log breakdown: ' + error.message)
-    } else {
-      // Also mark the hour as breakdown
-      await handleSubmitProduction(0, 'Breakdown')
+    try {
+      const { error } = await db.from('breakdowns').insert(payload)
+      if (error) {
+        // Handle FK failure for reported_by: retry without reported_by
+        const msg = String(error.message || '')
+        if (msg.includes('breakdowns_reported_by_fkey')) {
+          const fallback = { ...payload }
+          delete fallback.reported_by
+          const { error: fbErr } = await db.from('breakdowns').insert(fallback)
+          if (fbErr) {
+            alert('Failed to log breakdown: ' + fbErr.message)
+          } else {
+            await handleSubmitProduction(0, 'Breakdown')
+          }
+        } else {
+          alert('Failed to log breakdown: ' + msg)
+        }
+      } else {
+        // Also mark the hour as breakdown
+        await handleSubmitProduction(0, 'Breakdown')
+      }
+    } catch (e: any) {
+      alert('Failed to log breakdown: ' + (e?.message || String(e)))
     }
     setShowBreakdownModal(false)
   }
@@ -588,7 +680,7 @@ export default function HourlyLogging() {
           ) : (
             // Group machines by material category
             (['OB', 'OB_REHAB', 'COAL'] as const).map(mat => {
-              const groupMachines = machines.filter(m => (m.material_type || '') === mat)
+                const groupMachines = machines.filter(m => normalizeMaterial(m.material_type) === mat)
               const isCollapsed = !!collapsedGroups[mat]
               return (
                 <div key={mat} className="material-section" style={{ marginBottom: 16 }}>
@@ -602,7 +694,7 @@ export default function HourlyLogging() {
                       >
                         {isCollapsed ? '▸' : '▾'}
                       </button>
-                      <h3 style={{ margin: 0 }}>{mat === 'OB' ? 'OB (Mining)' : mat === 'OB_REHAB' ? 'OB (Rehabilitation)' : 'Coal'}</h3>
+                      <h3 style={{ margin: 0 }}>{mat === 'OB' ? 'OB (Mining)' : mat === 'OB_REHAB' ? 'OB (Rehabilitation)' : (isKalagadi ? 'Manganese' : 'Coal')}</h3>
                       <small style={{ color: '#6b7280' }}> {groupMachines.length} machine{groupMachines.length !== 1 ? 's' : ''}</small>
                     </div>
                     <div />
